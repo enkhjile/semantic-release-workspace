@@ -691,9 +691,31 @@ written during publishing and recorded in Git tags and GitHub release notes;
 generated version changes are not committed back to `main`.
 
 The GitHub Actions workflow verifies the manifest-declared Node version and the
-latest stable Node, then releases from `main` only after both verification jobs
-pass. The package uses standard semantic-release plugins for its own releases,
-avoiding a dependency on its unfinished workspace behavior.
+latest stable Node, then releases from `main` or `alpha` only after both
+verification jobs pass. The package uses standard semantic-release plugins for
+its own releases, avoiding a dependency on its unfinished workspace behavior.
+
+`main` publishes stable versions to npm's `latest` tag. The `alpha` branch
+publishes prereleases such as `1.0.0-alpha.1` to the `alpha` tag and marks their
+GitHub releases as prereleases. Install them with
+`npm install semantic-release-workspace@alpha`. Merge alpha work into `main`
+when it is ready for a stable release; semantic-release calculates the stable
+version from the commits and existing release history.
+
+The `@semantic-release/github` options in `release.config.mjs` keep GitHub
+releases enabled while disabling issue and pull-request automation:
+
+| Option                  | Effect                                                                 |
+| ----------------------- | ---------------------------------------------------------------------- |
+| `successComment: false` | Do not comment on released issues or pull requests.                    |
+| `failComment: false`    | Do not open or update an issue when a release fails.                   |
+| `failTitle: false`      | Also disables opening release-failure issues by title.                 |
+| `releasedLabels: false` | Do not add release labels to issues or pull requests.                  |
+| `addReleases: false`    | Do not append links from other publishing plugins to the release body. |
+
+The plugin still creates GitHub releases with the generated release notes.
+`contents: write` allows release publication; `id-token: write` is for npm OIDC.
+See the [GitHub plugin options](https://github.com/semantic-release/github/tree/v12.0.10#options).
 
 Before enabling real publishing:
 1. Create a GitHub repository, set its `origin` remote, and add matching

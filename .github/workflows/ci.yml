@@ -3,7 +3,7 @@ name: Verify and release
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, alpha]
   workflow_dispatch:
 
 permissions:
@@ -42,7 +42,9 @@ jobs:
 
   release:
     needs: verify
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/alpha')
     runs-on: ubuntu-latest
     permissions:
       contents: write
