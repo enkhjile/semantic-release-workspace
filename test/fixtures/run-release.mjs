@@ -31,10 +31,15 @@ try {
       dryRun: settings.dryRun ?? false,
       plugins:
         settings.failure === 'prepare'
-          ? [failure, [plugin, settings.pluginConfig ?? {}]]
-          : [[plugin, settings.pluginConfig ?? {}], failure],
+          ? [failure, [plugin, { publish: false, ...settings.pluginConfig }]]
+          : [[plugin, { publish: false, ...settings.pluginConfig }], failure],
     },
-    { cwd, env: { ...process.env }, stdout: output, stderr: output },
+    {
+      cwd,
+      env: { ...process.env, ...settings.env },
+      stdout: output,
+      stderr: output,
+    },
   );
   console.log(`RESULT:${JSON.stringify({ ok: true, result, logs })}`);
 } catch (error) {

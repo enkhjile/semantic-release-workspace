@@ -4,18 +4,20 @@ import SemanticReleaseError from '@semantic-release/error';
 import type { VerifyConditionsContext } from 'semantic-release';
 import type { PlanningState } from './plan-types.js';
 import { oid, validPlanning } from './plan-validation.js';
+import { type Execution, validExecution } from './publication-state.js';
 
 const execute = promisify(execFile);
 const journalRef = 'refs/notes/semantic-release-workspace';
 
 export interface Journal {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   branch: string;
   status: 'pending' | 'complete';
   head: string;
   baseHead: string | null;
   batchTag: string;
   planning?: PlanningState;
+  execution?: Execution;
 }
 
 export interface Snapshot {
@@ -76,9 +78,11 @@ function parseJournal(raw: string): Journal {
       value !== null &&
       'schemaVersion' in value &&
       (value.schemaVersion === 1 ||
-        (value.schemaVersion === 2 &&
+        ((value.schemaVersion === 2 || value.schemaVersion === 3) &&
           'planning' in value &&
-          validPlanning(value.planning))) &&
+          validPlanning(value.planning) &&
+          (value.schemaVersion !== 3 ||
+            ('execution' in value && validExecution(value.execution))))) &&
       'branch' in value &&
       typeof value.branch === 'string' &&
       'status' in value &&
@@ -93,7 +97,7 @@ function parseJournal(raw: string): Journal {
     ) {
       const result = value as Journal;
       if (
-        result.schemaVersion === 2 &&
+        result.schemaVersion !== 1 &&
         (result.planning?.plan.head !== result.head ||
           result.planning?.plan.baseHead !== result.baseHead)
       )
@@ -110,6 +114,23 @@ function parseJournal(raw: string): Journal {
           )
             throw new Error('Mismatched completed package version');
         }
+      }
+      if (result.schemaVersion !== 3 && result.execution !== undefined)
+        throw new Error('Unexpected execution payload');
+      if (result.execution && result.planning) {
+        const ids = result.planning.plan.packages
+          .filter((pkg) => pkg.nextVersion && !pkg.private)
+          .map((pkg) => pkg.id)
+          .sort();
+        if (
+          JSON.stringify(ids) !==
+            JSON.stringify(
+              result.execution.packages.map((pkg) => pkg.id).sort(),
+            ) ||
+          (result.status === 'complete' &&
+            result.execution.packages.some((pkg) => !pkg.tagged))
+        )
+          throw new Error('Incomplete execution');
       }
       if (result.schemaVersion === 1 && result.planning !== undefined)
         throw new Error('Unexpected planning payload');
@@ -282,15 +303,17 @@ export async function writeJournal(
   status: Journal['status'],
   batchTag: string,
   planning?: PlanningState,
+  execution?: Execution,
 ): Promise<void> {
   const journal: Journal = {
-    schemaVersion: planning ? 2 : 1,
+    schemaVersion: execution ? 3 : planning ? 2 : 1,
     branch: context.branch.name,
     status,
     head: current.head,
     baseHead: baseline(current),
     batchTag,
   };
+  if (execution) journal.execution = execution;
   if (planning) {
     const versions = new Map(
       planning.versions.map((entry) => [entry.id, entry]),

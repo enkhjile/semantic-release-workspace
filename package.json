@@ -50,11 +50,17 @@
     "vitest": "5.0.5"
   },
   "dependencies": {
+    "@npmcli/agent": "4.0.2",
+    "@npmcli/config": "10.14.0",
     "@semantic-release/commit-analyzer": "13.0.1",
     "@semantic-release/error": "4.0.0",
     "fast-glob": "3.3.3",
+    "libnpmpublish": "11.2.1",
+    "npm-registry-fetch": "19.1.1",
     "semver": "7.8.5",
     "smol-toml": "1.9.1",
+    "tar": "7.5.22",
+    "toml-eslint-parser": "1.0.3",
     "yaml": "2.9.1"
   }
 }

@@ -19,11 +19,18 @@ import {
   writeJournal,
 } from './journal.js';
 import { createVersionPlan, planNotes } from './planning.js';
+import {
+  preflight,
+  preparePublication,
+  publishing,
+  publishPackages,
+  recoverManifests,
+} from './publication.js';
 
 type PluginConfig = Record<string, unknown>;
 
 export async function verifyConditions(
-  _config: PluginConfig,
+  config: PluginConfig,
   context: VerifyConditionsContext,
 ): Promise<void> {
   if (
@@ -47,6 +54,8 @@ export async function verifyConditions(
       'EWORKSPACECONFIG',
     );
   }
+  if (publishing(config) && !context.options.dryRun)
+    await recoverManifests(context);
   if (await git(context, 'status', '--porcelain', '--untracked-files=normal')) {
     throw new SemanticReleaseError(
       'The workspace checkout must be clean.',
@@ -90,7 +99,8 @@ export async function verifyRelease(
       'EWORKSPACECONFIG',
     );
   }
-  await snapshot(context);
+  const planning = await createVersionPlan(_config, context);
+  await preflight(_config, context, planning);
 }
 
 export async function generateNotes(
@@ -98,7 +108,8 @@ export async function generateNotes(
   context: GenerateNotesContext,
 ): Promise<string> {
   const planning = await createVersionPlan(config, context);
-  if (planning.plan.packages.length) return planNotes(planning.plan);
+  if (planning.plan.packages.length)
+    return planNotes(planning.plan, publishing(config));
   const { current, commits } = await commitsSinceCompletion(context);
   return [
     '# Workspace batch lifecycle proof',
@@ -121,6 +132,15 @@ export async function prepare(
   context: PrepareContext,
 ): Promise<void> {
   const planning = await createVersionPlan(config, context);
+  if (publishing(config) && planning.plan.packages.length) {
+    await preparePublication(
+      config,
+      context,
+      planning,
+      context.nextRelease.gitTag,
+    );
+    return;
+  }
   await writeJournal(
     context,
     planning.current,
@@ -133,7 +153,17 @@ export async function prepare(
 }
 
 export async function publish(config: PluginConfig, context: PublishContext) {
-  const { plan } = await createVersionPlan(config, context);
+  const planning = await createVersionPlan(config, context);
+  const { plan } = planning;
+  if (publishing(config) && planning.current.journal?.execution) {
+    await publishPackages(
+      config,
+      context,
+      planning,
+      context.nextRelease.gitTag,
+    );
+    return { name: 'Workspace packages', plan };
+  }
   context.logger.log(
     'Workspace planning completed; no packages were published.',
   );
@@ -153,6 +183,7 @@ export async function success(
     planning.plan.packages.length || planning.current.journal?.planning
       ? planning
       : undefined,
+    planning.current.journal?.execution,
   );
 }
 

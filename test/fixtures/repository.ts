@@ -65,6 +65,7 @@ export function fixture() {
   const anchor = git(cwd, 'rev-parse', 'HEAD');
   return {
     cwd,
+    env,
     remote,
     anchor,
     git,
@@ -96,6 +97,7 @@ export function fixture() {
         failure?: 'prepare' | 'after-prepare' | 'publish';
         tagFormat?: string;
         pluginConfig?: Record<string, unknown>;
+        env?: Record<string, string>;
       } = {},
       directory = cwd,
     ): Outcome {
@@ -106,7 +108,7 @@ export function fixture() {
           cwd: directory,
           env,
           encoding: 'utf8',
-          timeout: 30_000,
+          timeout: 120_000,
           maxBuffer: 4 * 1024 * 1024,
         },
       );

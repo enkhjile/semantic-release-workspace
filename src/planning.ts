@@ -153,7 +153,7 @@ export async function createVersionPlan(
     dependencyRanges: coordinated.dependencyRanges,
   };
 }
-export function planNotes(plan: ReleasePlan): string {
+export function planNotes(plan: ReleasePlan, publish = false): string {
   return [
     '# Workspace version plan',
     '',
@@ -164,7 +164,9 @@ export function planNotes(plan: ReleasePlan): string {
           `- ${pkg.id}: ${pkg.currentVersion ?? 'unreleased'} → ${pkg.nextVersion} (${pkg.type}${pkg.private ? ', private' : ''})`,
       ),
     '',
-    'Planning only; manifests and registries are unchanged.',
+    publish
+      ? 'Package versions, manifest edits and dependency-first publication order are frozen for this batch.'
+      : 'Planning only; manifests and registries are unchanged.',
     '',
     '```json',
     JSON.stringify(plan, null, 2),

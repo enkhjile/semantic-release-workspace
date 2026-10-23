@@ -4,13 +4,13 @@ Workspace-aware monorepo releases for semantic-release.
 
 ## Status
 
-The plugin now implements workspace discovery and the real semantic-release lifecycle:
-workspace batch tags, read-only release previews, no-change runs, and durable
-retry after a failed run. It discovers pnpm, npm, Yarn, and Cargo workspaces,
-including private packages and non-publishable crates. It attributes commits to
-packages and produces independent version plans with coordinated dependency
-updates. Manifest changes, package tags, and npm/crates.io publication are not
-implemented yet.
+The plugin discovers pnpm, npm, Yarn and Cargo workspaces, attributes commits,
+plans independent versions and coordinates dependencies. It updates release
+manifests, publishes npm packages and Cargo crates, and creates immutable
+per-package tags through the real semantic-release lifecycle. Dry runs are
+read-only; interrupted batches retain exact artifacts for safe retries, including
+from a fresh clone. Private packages and `publish = false` crates participate in
+planning without being published.
 
 ## Workspace discovery
 
@@ -146,8 +146,7 @@ With no recorded baseline, a declared stable manifest
 version is incremented; Cargo `version.workspace = true` is resolved. A package
 with no declared version starts at `1.0.0` when it first needs a release. Invalid
 or prerelease baselines fail instead of being coerced. Inherited Cargo package
-versions are planned independently; a later manifest writer must materialize
-member versions when they differ.
+versions are planned independently and materialized in each prepared member manifest.
 
 ### Dependency coordination
 
@@ -176,8 +175,7 @@ separate from package versions.
 Completing a batch records planned versions and projected dependency ranges in
 the journal. Later plans use those ranges while their original manifest values
 remain unchanged; an edited dependency requirement takes precedence. This keeps
-successive planning batches consistent without writing manifests. These records
-are planning history, not evidence of registry publication.
+successive planning batches consistent without writing manifests. In `publish: false` mode these records are planning history, not evidence of registry publication.
 
 ## Batch lifecycle
 
@@ -192,13 +190,12 @@ export default {
 ```
 
 Run `semantic-release` from a clean repository root, with one stable release
-branch, full Git history, and permission to push tags and Git notes. Serialize
+branch, full Git history, and permission to push tags, Git notes and `refs/semantic-release-workspace/*`. Serialize
 release jobs for the repository. Other release branches, prereleases, dirty
 checkouts, and running from a package subdirectory are rejected in this milestone.
 
 Do not add a separate root commit analyzer or npm publisher to this consumer
-configuration. The coordinator owns the batch trigger; package publication will
-arrive in a later milestone. This repository's own `release.config.mjs` continues
+configuration. The coordinator owns analysis, manifest preparation, publication and package tags. This repository's own `release.config.mjs` continues
 using standard plugins to version and publish the plugin package itself.
 
 The exported hooks are `verifyConditions`, `analyzeCommits`, `verifyRelease`,
@@ -219,9 +216,10 @@ The journal is a versioned JSON note attached to the repository's single root
 commit; it records the release branch, source commit, previous completed source
 commit, attempted batch tag, and `pending` or `complete` status. Schema 2 adds
 the exact package plan, completed package versions, and projected dependency
-ranges. Schema 1 journals remain readable and migrate when package planning begins.
+ranges. Schema 3 adds the prepared commit, frozen destinations, artifact refs and
+publication/tag progress. Schemas 1 and 2 remain readable.
 - `prepare` pushes a pending journal **before** core creates its batch tag.
-- `publish` returns the package plan and publishes no packages.
+- `publish` executes dependency-first publication and pushes each successful package tag.
 - `success` marks the batch complete after all publish hooks have succeeded.
 - `fail` preserves pending state. A failure before journal creation leaves no
   pending state.
@@ -248,8 +246,8 @@ including when previewing a pending retry.
 
 Missing state alongside existing reachable workspace tags, malformed journals,
 and journal/tag mismatches stop the run. Restore damaged journal state rather
-than deleting it to bypass recovery checks. Git notes are part of release state
-and must be retained by repository backups and mirrors.
+than deleting it to bypass recovery checks. Git notes and `refs/semantic-release-workspace/*` are release state and must be retained by
+repository backups and mirrors.
 
 Completion covers publication, not subsequent reporting hooks: a reporter that
 fails after this plugin's `success` hook may fail the overall command even though
@@ -259,7 +257,7 @@ the batch is already complete. Do not use reporting failure to republish work.
 
 `pnpm test` builds the package and runs real semantic-release 25 invocations in
 separate Node processes against disposable local bare Git remotes. No GitHub
-repository, npm publication, network credentials, or mocked core is required.
+repository, public registry publication, real credentials, or mocked core is required.
 Fixture tests exercise workspace definitions, exclusions, private packages,
 duplicate names, invalid input, conflicts, and path boundaries. Real-core tests
 also verify discovery through all three JavaScript managers, Cargo-only and mixed
@@ -272,6 +270,97 @@ blocked newer commits, and damaged recovery state. Planning tests exercise
 independent/tagged versions, nested ownership, rename attribution, shared files,
 npm/Cargo ranges, dependency chains/cycles, peers and dev dependencies, private
 packages, schema migration, projected ranges, and exact fresh-clone plan recovery.
+
+## Manifest preparation and publishing
+
+Publication is enabled by default. To keep discovery and version planning only,
+use `plugins: [['semantic-release-workspace', { publish: false }]]`.
+
+```js
+export default {
+  branches: ['main'],
+  tagFormat: 'workspace-v${version}',
+  plugins: [
+    [
+      'semantic-release-workspace',
+      {
+        npm: {
+          registry: 'https://registry.npmjs.org',
+          access: 'public',
+          tag: 'latest',
+        },
+        cargo: { registry: 'crates-io' },
+      },
+    ],
+  ],
+};
+```
+
+Both ecosystem options are optional. npm resolves registry, access and dist-tag
+from plugin options, package `publishConfig`, then native npm configuration,
+including scope-specific registry routing. An explicit registry override wins over
+scope settings for both verification and upload. Unspecified access retains
+npm's null/no-change setting rather than forcing public visibility. Normal npm
+`.npmrc` token/basic authentication, custom CAs, proxies and scoped client
+certificates are supported. npm packing uses the installed npm command;
+publication uses the official npm client libraries with an origin-bound transport
+agent, rejecting redirects to another scheme, host or port before sending headers.
+Provenance and OIDC trusted publishing are deferred for consumer workspaces;
+use registry credentials in this milestone. The plugin's own release workflow
+continues using standard semantic-release npm trusted publishing.
+
+Cargo supports crates.io and named HTTP sparse registries configured in
+`.cargo/config.toml`, `$CARGO_HOME/config.toml`, or
+`CARGO_REGISTRIES_<NAME>_INDEX`. Configure `cargo.registry` to override the default;
+a single-entry package `publish` allowlist also selects a registry. Allowlists are
+enforced. Authentication uses `CARGO_REGISTRY_TOKEN`,
+`CARGO_REGISTRIES_<NAME>_TOKEN`, or `$CARGO_HOME/credentials.toml`.
+Git-index registries and external credential-provider-only setups are not supported.
+Registry HTTP redirects are rejected. Native Cargo packaging verifies the crate
+before its exact retained `.crate` bytes are uploaded through the Cargo registry
+web API. Internal dependencies resolve from their destination registry, and
+upload metadata is read from the verified normalized crate. Cargo publication
+cycles are rejected before publication; npm cycles retain a stable order.
+Cargo and npm must be installed for their respective package types.
+
+Each batch creates a detached prepared commit containing package versions and
+coordinated dependency edits. JSON indentation and unrelated fields are retained;
+Cargo edits preserve comments and materialize inherited member versions. Tags use
+`npm/<name>@<version>` and `cargo/<name>@<version>` and point to this commit.
+The source branch stays at the original source commit. Source manifests are
+replaced atomically during execution and restored after success or failure;
+startup recovery restores only exact plugin-owned bytes and rejects user edits
+and symlink replacements. Lockfile changes stay in isolated packaging copies.
+
+npm artifacts convert `workspace:`, aliases, `file:` and `link:` references to
+publishable version requirements. Canonical prepared manifests retain workspace
+protocols. Both packers use isolated Git-aware copies, preserving installed npm
+build tools, existing ignored build outputs, and Git ignore selection (including
+local exclusions). Build workspace dependencies before running the release. Package scripts may run
+during the first isolated pack; a retained
+artifact is never rebuilt during retry. Avoid scripts with external side effects.
+
+Prepared commits and artifacts are pushed under
+`refs/semantic-release-workspace/prepared/<source-commit>` and
+`refs/semantic-release-workspace/artifacts/<source-commit>/<package-id-hash>`.
+Artifacts are limited to 100 MiB each. Preserve these refs with the journal in
+backups. Before starting a batch, all destination versions are checked for conflicts.
+Before uploading, the plugin saves an intent; it confirms publication
+using npm integrity or the Cargo index checksum. Existing versions are accepted
+only when their exact bytes match and this batch already recorded an intent.
+Foreign versions, checksum mismatches, missing/corrupt artifacts, changed
+publication policy and conflicting tags stop the batch. Failed tag pushes retry
+without another upload. An unavailable or delayed registry leaves pending work
+for a rerun at the same source commit. Already published registry versions are
+irreversible; recovery completes the remaining work instead of rolling them back.
+
+Integration tests use real semantic-release, native npm/Cargo packers, disposable
+Git remotes, local registries and a local mutual-TLS registry. They exercise
+registry overrides, credential-safe redirects, access preservation, packed contents,
+private packages, clean/dry/no-change runs, hard termination, lost upload responses,
+tag failures, conflicting versions/tags, artifact corruption and fresh-clone retries.
+The test suite requires Cargo/Rust, Git, npm and OpenSSL; no public registry writes
+or real credentials are used.
 
 ## Development
 
@@ -297,6 +386,9 @@ Commands:
 - `pnpm release:dry-run`: preview the next release in a configured repository.
 
 Development tools use exact stable versions resolved from npm on 2026-10-23.
+The npm runtime clients use the newest stable releases compatible with Node 24.0
+(config 10.14.0, registry-fetch 19.1.1, libnpmpublish 11.2.1, agent 4.0.2);
+their newer major versions require Node 24.15 or newer.
 Node typings track the latest Node 24 release to avoid using newer runtime APIs.
 tsdown currently warns that its TypeScript 7 API integration is experimental;
 the compiler itself is a stable release. Build and declaration output are verified.

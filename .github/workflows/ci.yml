@@ -28,6 +28,10 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Install stable Rust for Cargo integration tests
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
       - run: pnpm check
       - run: pnpm pack
 

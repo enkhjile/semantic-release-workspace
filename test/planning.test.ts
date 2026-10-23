@@ -488,7 +488,8 @@ describe('package planning with real semantic-release', {
     const docs = f.change('docs: document b');
     f.file('packages/a/index.js', 'feature');
     f.change('feat: enhance a');
-    expect(f.run().ok).toBe(true);
+    const second = f.run();
+    expect(second.ok, second.logs).toBe(true);
     f.file('packages/b/index.js', 'repair');
     const fix = f.change('fix: repair b');
     expect(plan(f).packages).toMatchObject([
