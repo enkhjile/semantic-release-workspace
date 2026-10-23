@@ -16,9 +16,57 @@ import {
   releaseError,
 } from './release-io.js';
 
+type Planning = PlanningState & { current: Snapshot };
+
+function changelogOrigin(
+  path: string,
+  planning: Planning,
+  ancestors: Map<string, number>,
+): Journal | undefined {
+  const origins: Journal[] = [];
+  for (const pkg of planning.plan.packages.filter(
+    (entry) => join(entry.path, 'CHANGELOG.md') === path,
+  )) {
+    const current = pkg.currentVersion;
+    if (!current) continue;
+    let selected: Journal | undefined;
+    let selectedVersion: string | undefined;
+    for (const entry of planning.current.history) {
+      if (
+        !entry.execution ||
+        !ancestors.has(entry.head) ||
+        !entry.planning?.releaseNotes?.changelogs.some(
+          (change) => change.path === path,
+        )
+      )
+        continue;
+      const version = entry.planning.plan.packages.find(
+        (old) => old.id === pkg.id,
+      )?.nextVersion;
+      if (!version || !lte(version, current)) continue;
+      const pre = prerelease(version);
+      if (
+        pre &&
+        (!prerelease(current) ||
+          pre.slice(0, -1).join('.') !==
+            prerelease(current)?.slice(0, -1).join('.'))
+      )
+        continue;
+      if (!selectedVersion || gt(version, selectedVersion)) {
+        selected = entry;
+        selectedVersion = version;
+      }
+    }
+    if (selected) origins.push(selected);
+  }
+  return origins.sort(
+    (a, b) => (ancestors.get(a.head) ?? 0) - (ancestors.get(b.head) ?? 0),
+  )[0];
+}
+
 export async function changelogChanges(
   context: VerifyConditionsContext,
-  planning: PlanningState & { current: Snapshot },
+  planning: Planning,
   notes: ReleaseNotes,
 ): Promise<ChangelogChange[]> {
   if (!notes.changelog) return [];
@@ -42,47 +90,7 @@ export async function changelogChanges(
         'Changelog differs from committed source history.',
         'EWORKSPACEDIRTY',
       );
-    const origins: Journal[] = [];
-    for (const pkg of planning.plan.packages.filter(
-      (entry) => join(entry.path, 'CHANGELOG.md') === path,
-    )) {
-      const current = planning.plan.packages.find(
-        (entry) => entry.id === pkg.id,
-      )?.currentVersion;
-      if (!current) continue;
-      let selected: Journal | undefined;
-      let selectedVersion: string | undefined;
-      for (const entry of planning.current.history) {
-        if (
-          !entry.execution ||
-          !ancestors.has(entry.head) ||
-          !entry.planning?.releaseNotes?.changelogs.some(
-            (change) => change.path === path,
-          )
-        )
-          continue;
-        const version = entry.planning.plan.packages.find(
-          (old) => old.id === pkg.id,
-        )?.nextVersion;
-        if (!version || !lte(version, current)) continue;
-        const pre = prerelease(version);
-        if (
-          pre &&
-          (!prerelease(current) ||
-            pre.slice(0, -1).join('.') !==
-              prerelease(current)?.slice(0, -1).join('.'))
-        )
-          continue;
-        if (!selectedVersion || gt(version, selectedVersion)) {
-          selected = entry;
-          selectedVersion = version;
-        }
-      }
-      if (selected) origins.push(selected);
-    }
-    const origin = origins.sort(
-      (a, b) => (ancestors.get(a.head) ?? 0) - (ancestors.get(b.head) ?? 0),
-    )[0];
+    const origin = changelogOrigin(path, planning, ancestors);
     let base = before ?? '';
     const previous = origin?.planning?.releaseNotes?.changelogs.find(
       (change) => change.path === path,
