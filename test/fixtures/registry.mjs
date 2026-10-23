@@ -16,6 +16,7 @@ const handler = async (req, res) => {
   state.requests ??= [];
   state.requests.push({
     method: req.method,
+    userAgent: req.headers['user-agent'],
     path: req.url,
     authorization: req.headers.authorization,
     authorized: req.socket.authorized,
@@ -67,6 +68,7 @@ const handler = async (req, res) => {
         'https://github.com/fixture/repo/.github/workflows/release.yml@refs/heads/main',
       repository: 'fixture/repo',
       sha: trusted.head,
+      jti: `identity-${state.requests.filter((entry) => entry.path.startsWith('/oidc')).length}`,
       aud: audience,
       repository_visibility: 'public',
       ...(trusted.claims ?? {}),
@@ -102,6 +104,67 @@ const handler = async (req, res) => {
       201,
     );
   }
+  const cargoTrusted = existsSync(join(directory, 'cargo-oidc.json'))
+    ? JSON.parse(readFileSync(join(directory, 'cargo-oidc.json'), 'utf8'))
+    : undefined;
+  if (cargoTrusted && path === '/cargo/api/v1/trusted_publishing/tokens') {
+    if (req.method === 'DELETE') {
+      if (cargoTrusted.redirectRevoke) {
+        res.writeHead(307, { location: cargoTrusted.redirectRevoke });
+        return res.end();
+      }
+      if (cargoTrusted.rejectRevoke)
+        return json(
+          { errors: [{ detail: 'cargo-secret revoke failed' }] },
+          503,
+        );
+      const token = req.headers.authorization?.replace(/^Bearer /, '');
+      const entry = state.cargoExchanges?.find(
+        (entry) => entry.token === token,
+      );
+      if (!entry) return json({}, 401);
+      entry.revoked = true;
+      state.cargoRevocations ??= [];
+      state.cargoRevocations.push(token);
+      writeFileSync(stateFile, JSON.stringify(state));
+      res.writeHead(204);
+      return res.end();
+    }
+    if (req.method !== 'POST') return json({}, 405);
+    if (cargoTrusted.redirectExchange) {
+      res.writeHead(307, { location: cargoTrusted.redirectExchange });
+      return res.end();
+    }
+    if (cargoTrusted.rejectExchange)
+      return json({ errors: [{ detail: 'ci-request-secret rejected' }] }, 403);
+    if (cargoTrusted.badJSON) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end('cargo-secret invalid JSON');
+    }
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const { jwt } = JSON.parse(Buffer.concat(chunks));
+    const claims = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url'));
+    const audience = `${base.replace(/^https?:\/\//, '')}/cargo`;
+    if (
+      claims.aud !== audience ||
+      req.headers.authorization ||
+      !req.headers['user-agent']?.includes('semantic-release-workspace')
+    )
+      return json({}, 401);
+    state.cargoExchanges ??= [];
+    if (state.cargoExchanges.some((entry) => entry.jwt === jwt))
+      return json({ errors: [{ detail: 'JWT already used' }] }, 400);
+    const token = `cargo-secret-${state.cargoExchanges.length + 1}`;
+    state.cargoExchanges.push({
+      token,
+      jwt,
+      revoked: false,
+      expired: !!cargoTrusted.expired,
+    });
+    writeFileSync(stateFile, JSON.stringify(state));
+    return json(cargoTrusted.emptyToken ? { token: '' } : { token });
+  }
   if (req.method === 'PUT') {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
@@ -120,6 +183,14 @@ const handler = async (req, res) => {
       const length = bytes.readUInt32LE(0);
       const meta = JSON.parse(bytes.subarray(4, 4 + length));
       const artifact = bytes.subarray(8 + length);
+      if (cargoTrusted) {
+        const token = req.headers.authorization?.replace(/^Bearer /, '');
+        const credential = state.cargoExchanges?.find(
+          (entry) => entry.token === token,
+        );
+        if (!credential || credential.revoked || credential.expired)
+          return json({ errors: [{ detail: 'cargo-secret invalid' }] }, 401);
+      }
       state.cargo[meta.name] ??= {};
       const versions = state.cargo[meta.name];
       if (versions[meta.vers])
@@ -175,7 +246,10 @@ const handler = async (req, res) => {
     return json({ ok: true, warnings: {} });
   }
   if (path === '/cargo/index/config.json')
-    return json({ dl: `${base}/cargo/api/v1/crates`, api: `${base}/cargo` });
+    return json({
+      dl: `${base}/cargo/api/v1/crates`,
+      api: cargoTrusted?.api ?? `${base}/cargo`,
+    });
   if (path.startsWith('/cargo/index/')) {
     const name = path.split('/').at(-1);
     const versions = state.cargo[name];

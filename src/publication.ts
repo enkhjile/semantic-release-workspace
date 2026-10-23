@@ -1,4 +1,5 @@
 import type { VerifyConditionsContext } from 'semantic-release';
+import { createCargoIdentity, hasCargoIdentity } from './cargo-identity.js';
 import { discoverWorkspaces } from './discovery.js';
 import { git, snapshot, writeJournal } from './journal.js';
 import {
@@ -159,6 +160,15 @@ export async function preflight(
         'npm trusted publishing requires a supported CI identity and id-token permissions.',
         'EWORKSPACEOIDC',
       );
+    if (
+      !retained &&
+      entry.destination.cargoAuth === 'oidc' &&
+      !hasCargoIdentity(context.env ?? process.env)
+    )
+      return releaseError(
+        'Cargo trusted publishing requires GitHub Actions identity permissions or a GitLab CRATES_IO_ID_TOKEN.',
+        'EWORKSPACEOIDC',
+      );
     if (!retained && entry.destination.ecosystem === 'npm')
       validateProvenanceContext(context, entry.destination, planning.plan.head);
   }
@@ -309,6 +319,7 @@ export async function publishPackages(
     );
   await tags(context, execution, planning);
   const retained = await retainedArtifacts(context, planning, execution);
+  const cargoIdentity = createCargoIdentity(context);
   try {
     await applyManifests(root, changes);
     for (const id of planning.plan.groups.flat()) {
@@ -423,6 +434,9 @@ export async function publishPackages(
             entry.destination,
             artifact.bytes,
             artifact.metadata,
+            entry.destination.cargoAuth === 'oidc'
+              ? await cargoIdentity.token(entry.destination)
+              : undefined,
           );
         } catch (error) {
           failure = error;
@@ -456,7 +470,11 @@ export async function publishPackages(
       context.logger.log('Published %s@%s.', pkg.id, pkg.nextVersion);
     }
   } finally {
-    await applyManifests(root, changes, true);
+    try {
+      await applyManifests(root, changes, true);
+    } finally {
+      await cargoIdentity.close();
+    }
   }
 }
 export async function recoverManifests(

@@ -12,8 +12,10 @@ import { basename, join, resolve } from 'node:path';
 import type { VerifyConditionsContext } from 'semantic-release';
 import { parse, stringify } from 'smol-toml';
 import { archiveFile } from './archive.js';
+import { cargoPolicy, cargoUserAgent } from './cargo-identity.js';
 import { git } from './journal.js';
 import { editManifest } from './manifests.js';
+import { serviceURL } from './npm-identity.js';
 import { createProvenance } from './npm-provenance.js';
 import {
   npmPolicy,
@@ -193,6 +195,7 @@ export async function destination(
     ecosystem: 'cargo',
     registry: name,
     index: `${url(index.slice(7))}/`,
+    ...cargoPolicy(context, options, previous),
   };
 }
 async function cargoToken(
@@ -222,8 +225,11 @@ async function request(
   init: RequestInit = {},
 ): Promise<Response> {
   try {
+    const headers = new Headers(init.headers);
+    headers.set('user-agent', cargoUserAgent);
     const result = await fetch(target, {
       ...init,
+      headers,
       redirect: 'error',
       signal: AbortSignal.timeout(30_000),
     });
@@ -255,7 +261,9 @@ export async function completeCargoDestination(
     .json()
     .catch(() => releaseError('Invalid Cargo registry configuration.'));
   if (!record(data)) return releaseError('Invalid Cargo registry config.json.');
-  return { ...dest, api: url(data.api) };
+  const api = url(data.api);
+  if (dest.cargoAuth === 'oidc') serviceURL(api);
+  return { ...dest, api };
 }
 export async function probe(
   context: VerifyConditionsContext,
@@ -621,10 +629,14 @@ export async function upload(
   dest: Destination,
   bytes: Buffer,
   metadata: unknown,
+  publishingToken?: string,
 ): Promise<void> {
   if (dest.ecosystem === 'npm')
     return npmUpload(context, dest, bytes, metadata);
-  const token = await cargoToken(context, dest.registry);
+  const token =
+    dest.cargoAuth === 'oidc'
+      ? publishingToken
+      : await cargoToken(context, dest.registry);
   if (!token)
     return releaseError(
       'Cargo token is required. Use CARGO_REGISTRY_TOKEN, CARGO_REGISTRIES_<NAME>_TOKEN or cargo login credentials; external credential providers are not supported.',

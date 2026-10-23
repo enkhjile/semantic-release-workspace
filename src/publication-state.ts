@@ -10,6 +10,7 @@ export interface Destination {
   index?: string;
   api?: string;
   npmAuth?: 'oidc';
+  cargoAuth?: 'oidc';
   provenance?: true | 'auto';
   sigstore?: {
     fulcioURL: string;
@@ -52,6 +53,9 @@ export function validExecution(value: unknown): value is Execution {
       )
         return false;
       if (
+        (entry.destination.cargoAuth !== undefined &&
+          (entry.destination.ecosystem !== 'cargo' ||
+            entry.destination.cargoAuth !== 'oidc')) ||
         (entry.destination.npmAuth !== undefined &&
           entry.destination.npmAuth !== 'oidc') ||
         (entry.destination.provenance !== undefined &&

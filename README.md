@@ -404,6 +404,60 @@ Cargo supports crates.io and named HTTP sparse registries configured in
 a single-entry package `publish` allowlist also selects a registry. Allowlists are
 enforced. Authentication uses `CARGO_REGISTRY_TOKEN`,
 `CARGO_REGISTRIES_<NAME>_TOKEN`, or `$CARGO_HOME/credentials.toml`.
+`cargo.trustedPublishing` accepts `"auto"` (default), `true` or `false`.
+Automatic mode uses GitHub Actions identity requests or a GitLab.com
+`CRATES_IO_ID_TOKEN` when available; required mode validates identity availability
+in preflight, including dry runs. Disabled mode uses the existing Cargo token
+configuration. Selected OIDC never falls back to a stored token after a failure.
+Pending batches retain their frozen authentication mode, including older token
+batches retried in CI that now exposes OIDC.
+
+Configure a crates.io trusted publisher for **each crate**, matching the repository,
+workflow and optional environment. crates.io currently requires the crate's first
+publication to use a normal API token. In GitHub Actions, grant `id-token: write`
+to the release job; the plugin obtains and exchanges the identity itself, so an
+additional authentication action is unnecessary. For GitLab.com, whose crates.io
+support is currently public beta, configure:
+
+```yaml
+id_tokens:
+  CRATES_IO_ID_TOKEN:
+    aud: crates.io
+```
+
+```js
+// Pass this object as the semantic-release-workspace plugin configuration.
+const pluginConfig = { cargo: { trustedPublishing: true } };
+```
+
+Compatible named registries use the API base discovered from their sparse index.
+The audience is that API base with its `http://` or `https://` prefix removed
+(`crates.io` for the public registry); paths and ports remain part of alternate
+registry audiences. Identity, exchange, upload and revocation reject redirects.
+OIDC exchange and revocation require HTTPS, with HTTP allowed only on loopback
+for local tests. Changing the API or authentication policy blocks pending retries.
+
+Unlike npm's package-scoped exchange, Cargo exchanges once per API per invocation
+and shares the short-lived credential across matching crates. This accommodates
+crates.io's single-use CI identities, including GitLab's supplied job token. The
+registry validates signatures and restricts the token to configured crates. The
+credential stays in memory, is used only for upload, and is revoked during cleanup
+after success or failure. Tokens expire upstream after 30 minutes; this plugin
+stops using them after 25 minutes and requires a fresh CI job. They are never
+passed to package scripts or saved in manifests, credentials files, journals or
+artifact refs. Private dependency/index reads still require ordinary read access.
+
+A rejected upload retries the retained crate with a new exchange. On GitLab, rerun
+the CI job to obtain a fresh single-use ID token before exchanging again. An uncertain
+accepted upload can finish from a fresh clone without current CI credentials,
+using the exact retained checksum and original upload intent. No-change runs and
+dry runs make no identity, exchange or revocation calls. Dry runs cannot verify
+remote trust settings. Revocation failures are reported and preserve pending
+progress; forced termination or lost exchange responses can leave a token active
+until its upstream expiry. Such tokens cannot be recovered from disk by retries.
+See the [crates.io trusted-publishing setup](https://crates.io/docs/trusted-publishing)
+and [exchange protocol](https://github.com/rust-lang/crates.io/blob/main/src/controllers/trustpub/tokens/exchange/mod.rs).
+
 Git-index registries and external credential-provider-only setups are not supported.
 Registry HTTP redirects are rejected. Native Cargo packaging verifies the crate
 before its exact retained `.crate` bytes are uploaded through the Cargo registry
