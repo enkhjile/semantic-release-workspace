@@ -19,13 +19,17 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: ["24.17.0", "latest"]
+        include:
+          - node: project
+            runtime: ""
+          - node: latest
+            runtime: node@latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Node.js, pnpm, and dependencies
         uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
         with:
-          runtime: node@${{ matrix.node }}
+          runtime: ${{ matrix.runtime }}
           cache: true
           require-lockfile: true
       - name: Install stable Rust for Cargo integration tests
@@ -50,7 +54,6 @@ jobs:
       - name: Set up Node.js, pnpm, and dependencies
         uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
         with:
-          node-version-file: .node-version
           cache: true
           require-lockfile: true
       - run: pnpm build

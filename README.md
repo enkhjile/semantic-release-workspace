@@ -636,12 +636,14 @@ or real credentials are used.
 
 ## Development
 
-The published package targets Node.js **24.0.0 and newer**. Development and
-publishing use **Node.js 24.17.0** (see `.node-version`), since the current build
-and release tools require newer Node 24 patch versions.
+The published package targets Node.js **24.0.0 and newer**, declared in
+`package.json` under `engines.node`. Development and publishing use the exact
+Node.js version pinned in `devEngines.runtime` in that same file. `pnpm install`
+downloads the runtime and records its version and checksum in `pnpm-lock.yaml`;
+project scripts use it automatically.
 
-Use pnpm **12.15.0**, pinned in `package.json`. Install it using your preferred
-Node version manager or `npm install --global pnpm@12.15.0`.
+Install pnpm using the [official installation guide](https://pnpm.io/installation).
+The `packageManager` field in `package.json` selects the required pnpm version.
 
 ```sh
 pnpm install
@@ -688,10 +690,10 @@ The version in the checkout is a development placeholder. Release versions are
 written during publishing and recorded in Git tags and GitHub release notes;
 generated version changes are not committed back to `main`.
 
-The GitHub Actions workflow verifies Node 24 and the latest stable Node, then
-releases from `main` only after both verification jobs pass. The package uses
-standard semantic-release plugins for its own releases, avoiding a dependency
-on its unfinished workspace behavior.
+The GitHub Actions workflow verifies the manifest-declared Node version and the
+latest stable Node, then releases from `main` only after both verification jobs
+pass. The package uses standard semantic-release plugins for its own releases,
+avoiding a dependency on its unfinished workspace behavior.
 
 Before enabling real publishing:
 1. Create a GitHub repository, set its `origin` remote, and add matching
