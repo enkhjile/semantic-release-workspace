@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import npmAgent from '@npmcli/agent';
 import Config from '@npmcli/config';
 import npmDefinitions from '@npmcli/config/lib/definitions/index.js';
@@ -7,10 +9,26 @@ import npmPublish from 'libnpmpublish';
 import npmFetch from 'npm-registry-fetch';
 import type { VerifyConditionsContext } from 'semantic-release';
 import { archiveFile } from './archive.js';
+import { hasIdentity, publishingOptions } from './npm-identity.js';
+import { provenanceBundle, sigstorePolicy } from './npm-provenance.js';
 import type { PackagePlan } from './plan-types.js';
 import type { Destination } from './publication-state.js';
 import { releaseError } from './release-io.js';
 import { record } from './workspace-files.js';
+
+export async function npmConfiguration(context: VerifyConditionsContext) {
+  const config = new Config({
+    ...npmDefinitions,
+    npmPath: dirname(
+      fileURLToPath(import.meta.resolve('@npmcli/config/package.json')),
+    ),
+    argv: [],
+    cwd: context.cwd ?? process.cwd(),
+    env: context.env ?? process.env,
+  });
+  await config.load();
+  return config;
+}
 
 async function options(
   context: VerifyConditionsContext,
@@ -18,16 +36,7 @@ async function options(
   name: string,
 ) {
   try {
-    const config = new Config({
-      ...npmDefinitions,
-      npmPath: dirname(
-        fileURLToPath(import.meta.resolve('@npmcli/config/package.json')),
-      ),
-      argv: [],
-      cwd: context.cwd ?? process.cwd(),
-      env: context.env ?? process.env,
-    });
-    await config.load();
+    const config = await npmConfiguration(context);
     const flat = config.flat;
     const scope = name.startsWith('@') ? name.split('/')[0] : undefined;
     const auth = npmFetch.getAuth(dest.registry, flat);
@@ -78,8 +87,10 @@ export async function npmProbe(
   context: VerifyConditionsContext,
   dest: Destination,
   pkg: PackagePlan,
+  metadata?: unknown,
 ): Promise<string | null> {
   const opts = await options(context, dest, pkg.name);
+  let foundVersion = false;
   try {
     const data: unknown = await npmFetch.json(
       `${dest.registry}/${encodeURIComponent(pkg.name)}`,
@@ -95,11 +106,61 @@ export async function npmProbe(
       typeof entry.dist.integrity !== 'string'
     )
       return releaseError('Published npm version has no integrity proof.');
+    foundVersion = true;
+    const bundle = provenanceBundle(metadata);
+    if (bundle) {
+      if (
+        !record(entry.dist.attestations) ||
+        typeof entry.dist.attestations.url !== 'string'
+      )
+        throw new Error();
+      const url = new URL(entry.dist.attestations.url);
+      if (
+        url.origin !== new URL(dest.registry).origin ||
+        url.username ||
+        url.password
+      )
+        throw new Error();
+      const proof: unknown = await npmFetch.json(url.href, opts);
+      if (
+        !record(proof) ||
+        !Array.isArray(proof.attestations) ||
+        !proof.attestations.some(
+          (value) => record(value) && isDeepStrictEqual(value.bundle, bundle),
+        )
+      )
+        throw new Error();
+    }
     return entry.dist.integrity;
   } catch (error) {
-    if (record(error) && error.statusCode === 404) return null;
+    if (!foundVersion && record(error) && error.statusCode === 404) return null;
     return releaseError(
       'Cannot verify the npm registry version. Check registry connectivity, redirects and credentials.',
+    );
+  }
+}
+export async function npmVisibility(
+  context: VerifyConditionsContext,
+  dest: Destination,
+  name: string,
+): Promise<boolean> {
+  if (
+    dest.access === 'public' ||
+    (!name.startsWith('@') && dest.access !== 'restricted')
+  )
+    return true;
+  if (dest.access === 'restricted') return false;
+  try {
+    const data: unknown = await npmFetch.json(
+      `${dest.registry}/-/package/${encodeURIComponent(name)}/visibility`,
+      await options(context, dest, name),
+    );
+    return record(data) && data.public === true;
+  } catch (error) {
+    if (record(error) && error.statusCode === 404) return false;
+    return releaseError(
+      'Cannot verify npm package visibility.',
+      'EWORKSPACEPROVENANCE',
     );
   }
 }
@@ -107,6 +168,7 @@ export async function npmUpload(
   context: VerifyConditionsContext,
   dest: Destination,
   bytes: Buffer,
+  metadata: unknown,
 ): Promise<void> {
   try {
     const manifest: unknown = JSON.parse(
@@ -117,14 +179,101 @@ export async function npmUpload(
         'Invalid npm artifact manifest.',
         'EWORKSPACEARTIFACT',
       );
-    await npmPublish.publish(
-      manifest,
-      bytes,
+    const opts = await publishingOptions(
+      context,
+      dest,
+      manifest.name,
       await options(context, dest, manifest.name),
     );
-  } catch {
+    const bundle = provenanceBundle(metadata);
+    if (!bundle) {
+      await npmPublish.publish(manifest, bytes, opts);
+      return;
+    }
+    const name = manifest.name;
+    const version = String(manifest.version);
+    const tarballName = `${name}-${version}.tgz`;
+    const serialized = JSON.stringify(bundle);
+    const dist = {
+      integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}`,
+      shasum: createHash('sha1').update(bytes).digest('hex'),
+      tarball: `${dest.registry}/${name}/-/${tarballName}`,
+    };
+    await npmFetch(`${dest.registry}/${encodeURIComponent(name)}`, {
+      ...opts,
+      method: 'PUT',
+      ignoreBody: true,
+      body: {
+        _id: name,
+        name,
+        description: manifest.description,
+        access: dest.access ?? null,
+        'dist-tags': { [dest.tag ?? 'latest']: version },
+        versions: {
+          [version]: {
+            ...manifest,
+            _id: `${name}@${version}`,
+            _nodeVersion: process.versions.node,
+            dist,
+          },
+        },
+        _attachments: {
+          [tarballName]: {
+            content_type: 'application/octet-stream',
+            data: bytes.toString('base64'),
+            length: bytes.length,
+          },
+          [`${name}-${version}.sigstore`]: {
+            content_type: bundle.mediaType,
+            data: serialized,
+            length: Buffer.byteLength(serialized),
+          },
+        },
+      },
+    });
+  } catch (error) {
+    if (record(error) && error.code === 'EWORKSPACEOIDC') throw error;
     return releaseError(
       'npm registry rejected the artifact. Check registry access and redirects; retry this batch after resolving the failure.',
     );
   }
+}
+
+export async function npmPolicy(
+  context: VerifyConditionsContext,
+  options: Record<string, unknown>,
+  publish: Record<string, unknown>,
+  previous?: Destination,
+): Promise<Pick<Destination, 'npmAuth' | 'provenance' | 'sigstore'>> {
+  const auth = options.trustedPublishing ?? 'auto';
+  if (![true, false, 'auto'].includes(auth as boolean | string))
+    return releaseError(
+      'npm.trustedPublishing must be true, false or auto.',
+      'EWORKSPACECONFIG',
+    );
+  const config = await npmConfiguration(context);
+  const provenance =
+    options.provenance ??
+    publish.provenance ??
+    (config.isDefault('provenance') ? 'auto' : config.flat.provenance);
+  if (![true, false, 'auto'].includes(provenance as boolean | string))
+    return releaseError(
+      'npm.provenance must be true, false or auto.',
+      'EWORKSPACECONFIG',
+    );
+  const oidc =
+    auth === true ||
+    (auth === 'auto' &&
+      (previous
+        ? previous.npmAuth === 'oidc'
+        : hasIdentity(context.env ?? process.env)));
+  const sigstore = await sigstorePolicy(context, options.sigstore);
+  return {
+    ...(sigstore ? { sigstore } : {}),
+    ...(oidc ? { npmAuth: 'oidc' as const } : {}),
+    ...(provenance === true ||
+    (provenance === 'auto' && oidc && (!previous || previous.provenance))
+      ? { provenance: provenance as true | 'auto' }
+      : {}),
+  };
 }

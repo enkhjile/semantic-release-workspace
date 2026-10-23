@@ -23,6 +23,7 @@ declare module '@npmcli/config' {
     constructor(options: Record<string, unknown>);
     load(): Promise<void>;
     flat: Record<string, unknown>;
+    isDefault(key: string): boolean;
   }
 }
 declare module '@npmcli/config/lib/definitions/index.js' {
@@ -34,6 +35,7 @@ declare module '@npmcli/agent' {
 }
 declare module 'npm-registry-fetch' {
   const fetch: {
+    (url: string, options: Record<string, unknown>): Promise<unknown>;
     json(url: string, options: Record<string, unknown>): Promise<unknown>;
     getAuth(
       url: string,

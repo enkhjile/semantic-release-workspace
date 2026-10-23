@@ -14,7 +14,13 @@ import { parse, stringify } from 'smol-toml';
 import { archiveFile } from './archive.js';
 import { git } from './journal.js';
 import { editManifest } from './manifests.js';
-import { npmProbe, npmUpload } from './npm-registry.js';
+import { createProvenance } from './npm-provenance.js';
+import {
+  npmPolicy,
+  npmProbe,
+  npmUpload,
+  npmVisibility,
+} from './npm-registry.js';
 import type { PackagePlan, ReleasePlan } from './plan-types.js';
 import type { Destination } from './publication-state.js';
 import { command, releaseError } from './release-io.js';
@@ -76,6 +82,7 @@ export async function destination(
   context: VerifyConditionsContext,
   config: Record<string, unknown>,
   pkg: WorkspacePackage,
+  previous?: Destination,
 ): Promise<Destination> {
   if (pkg.ecosystem === 'npm') {
     const options = config.npm === undefined ? {} : config.npm;
@@ -134,7 +141,13 @@ export async function destination(
         'Invalid npm access or dist-tag.',
         'EWORKSPACECONFIG',
       );
-    return { ecosystem: 'npm', registry, access, tag };
+    return {
+      ecosystem: 'npm',
+      registry,
+      access,
+      tag,
+      ...(await npmPolicy(context, options, publish, previous)),
+    };
   }
   const options = config.cargo === undefined ? {} : config.cargo;
   if (!record(options))
@@ -248,8 +261,9 @@ export async function probe(
   context: VerifyConditionsContext,
   dest: Destination,
   pkg: PackagePlan,
+  metadata?: unknown,
 ): Promise<string | null> {
-  if (dest.ecosystem === 'npm') return npmProbe(context, dest, pkg);
+  if (dest.ecosystem === 'npm') return npmProbe(context, dest, pkg, metadata);
   const token = await cargoToken(context, dest.registry);
   const result = await request(`${dest.index}${cargoIndexPath(pkg.name)}`, {
     headers: {
@@ -426,7 +440,17 @@ export async function pack(
           'Packed npm manifest differs from the frozen publication policy.',
           'EWORKSPACEARTIFACT',
         );
-      return { bytes, metadata: { name: pkg.name, version: pkg.nextVersion } };
+      return {
+        bytes,
+        metadata: await createProvenance(
+          context,
+          dest,
+          pkg,
+          bytes,
+          plan.head,
+          () => npmVisibility(context, dest, pkg.name),
+        ),
+      };
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -598,7 +622,8 @@ export async function upload(
   bytes: Buffer,
   metadata: unknown,
 ): Promise<void> {
-  if (dest.ecosystem === 'npm') return npmUpload(context, dest, bytes);
+  if (dest.ecosystem === 'npm')
+    return npmUpload(context, dest, bytes, metadata);
   const token = await cargoToken(context, dest.registry);
   if (!token)
     return releaseError(

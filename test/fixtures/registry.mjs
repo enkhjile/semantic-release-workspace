@@ -47,6 +47,61 @@ const handler = async (req, res) => {
     res.writeHead(503);
     return res.end();
   }
+  const trusted = existsSync(join(directory, 'oidc.json'))
+    ? JSON.parse(readFileSync(join(directory, 'oidc.json'), 'utf8'))
+    : undefined;
+  if (trusted && path === '/oidc') {
+    if (trusted.redirectIdentity) {
+      res.writeHead(307, { location: trusted.redirectIdentity });
+      return res.end();
+    }
+    if (req.headers.authorization !== 'Bearer ci-request-secret')
+      return json({ error: 'unauthorized' }, 401);
+    const audience = new URL(req.url, 'http://localhost').searchParams.get(
+      'audience',
+    );
+    const claims = {
+      iss: 'https://token.actions.githubusercontent.com',
+      sub: 'repo:fixture/repo:ref:refs/heads/main',
+      workflow_identity:
+        'https://github.com/fixture/repo/.github/workflows/release.yml@refs/heads/main',
+      repository: 'fixture/repo',
+      sha: trusted.head,
+      aud: audience,
+      repository_visibility: 'public',
+      ...(trusted.claims ?? {}),
+      exp: Math.floor(Date.now() / 1000) + 300,
+    };
+    const value = `${Buffer.from(JSON.stringify({ alg: 'RS256' })).toString('base64url')}.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.fixture-signature`;
+    return json({ value });
+  }
+  if (trusted && path.startsWith('/-/npm/v1/oidc/token/exchange/package/')) {
+    if (trusted.rejectExchange)
+      return json({ message: 'ci-request-secret exchange rejected' }, 403);
+    if (trusted.redirectExchange) {
+      res.writeHead(307, { location: trusted.redirectExchange });
+      return res.end();
+    }
+    const name = path.slice('/-/npm/v1/oidc/token/exchange/package/'.length);
+    const bearer = req.headers.authorization?.slice(7);
+    if (!bearer || bearer === 'fixture-token')
+      return json({ error: 'missing identity' }, 401);
+    const token = `exchange-secret:${name}:${(state.exchanges?.length ?? 0) + 1}`;
+    state.exchanges ??= [];
+    state.exchanges.push({ name, token });
+    writeFileSync(stateFile, JSON.stringify(state));
+    return json(
+      {
+        token_type: 'oidc',
+        token,
+        created: new Date().toISOString(),
+        expires: new Date(
+          Date.now() + (trusted.expired ? -1000 : 3600000),
+        ).toISOString(),
+      },
+      201,
+    );
+  }
   if (req.method === 'PUT') {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
@@ -77,18 +132,35 @@ const handler = async (req, res) => {
       state.uploads.push(`cargo:${meta.name}@${meta.vers}`);
     } else {
       const data = JSON.parse(bytes);
+      if (
+        trusted &&
+        req.headers.authorization !==
+          `Bearer ${state.exchanges?.filter((entry) => entry.name === data.name).at(-1)?.token}`
+      )
+        return json({ error: 'package-scoped token required' }, 401);
       for (const [version, meta] of Object.entries(data.versions)) {
         state.npm[data.name] ??= {};
         const versions = state.npm[data.name];
         if (versions[version]) return json({ error: 'exists' }, 409);
-        const attachment = Object.values(data._attachments)[0];
+        const attachment = Object.entries(data._attachments).find(([name]) =>
+          name.endsWith('.tgz'),
+        )[1];
+        const provenance = Object.entries(data._attachments).find(([name]) =>
+          name.endsWith('.sigstore'),
+        );
+        const bundle = provenance ? JSON.parse(provenance[1].data) : undefined;
         const artifact = Buffer.from(attachment.data, 'base64');
         meta.dist = {
           integrity: `sha512-${createHash('sha512').update(artifact).digest('base64')}`,
           shasum: createHash('sha1').update(artifact).digest('hex'),
           tarball: `${base}/npm-tar/${encodeURIComponent(data.name)}/${version}`,
         };
+        if (bundle)
+          meta.dist.attestations = {
+            url: `${base}/-/npm/v1/attestations/${encodeURIComponent(data.name)}@${version}`,
+          };
         versions[version] = {
+          bundle,
           access: data.access,
           metadata: meta,
           artifact: artifact.toString('base64'),
@@ -150,6 +222,39 @@ const handler = async (req, res) => {
     const name = path.slice(9, path.lastIndexOf('/'));
     const version = path.split('/').at(-1);
     return res.end(Buffer.from(state.npm[name][version].artifact, 'base64'));
+  }
+  if (path.startsWith('/-/package/') && path.endsWith('/visibility'))
+    return json({ public: trusted?.publicPackage === true });
+  if (path.startsWith('/-/npm/v1/attestations/')) {
+    const spec = path.slice('/-/npm/v1/attestations/'.length);
+    const at = spec.lastIndexOf('@');
+    const entry = state.npm[spec.slice(0, at)]?.[spec.slice(at + 1)];
+    if (controlValue === 'attestation-404') return json({}, 404);
+    if (controlValue === 'attestation-missing')
+      return json({ attestations: [] });
+    if (controlValue.startsWith('attestation-redirect:')) {
+      res.writeHead(307, {
+        location: controlValue.slice('attestation-redirect:'.length),
+      });
+      return res.end();
+    }
+    const bundle =
+      controlValue === 'attestation-corrupt'
+        ? {
+            ...entry?.bundle,
+            dsseEnvelope: { ...entry?.bundle.dsseEnvelope, payload: 'e30=' },
+          }
+        : entry?.bundle;
+    return json({
+      attestations: bundle
+        ? [
+            {
+              predicateType: 'https://slsa.dev/provenance/v1',
+              bundle,
+            },
+          ]
+        : [],
+    });
   }
   const name = path.slice(1);
   const versions = state.npm[name];

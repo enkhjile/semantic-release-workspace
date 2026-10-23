@@ -7,6 +7,11 @@ import {
   manifestChanges,
   readManifest,
 } from './manifests.js';
+import { hasIdentity } from './npm-identity.js';
+import {
+  validateProvenanceContext,
+  verifyProvenance,
+} from './npm-provenance.js';
 import type { PlanningState } from './plan-types.js';
 import type { Execution, PublicationPackage } from './publication-state.js';
 import {
@@ -124,11 +129,38 @@ export async function preflight(
       return releaseError('Discovered packages changed.', 'EWORKSPACEPLAN');
     result.push({
       id: pkg.id,
-      destination: await destination(context, config, source),
+      destination: await destination(
+        context,
+        config,
+        source,
+        planning.current.journal?.status === 'pending'
+          ? planning.current.journal.execution?.packages.find(
+              (entry) => entry.id === pkg.id,
+            )?.destination
+          : undefined,
+      ),
       intent: false,
       published: false,
       tagged: false,
     });
+  }
+  for (const entry of result) {
+    const retained =
+      planning.current.journal?.status === 'pending' &&
+      planning.current.journal.execution?.packages.find(
+        (pkg) => pkg.id === entry.id,
+      )?.artifact;
+    if (
+      !retained &&
+      entry.destination.npmAuth === 'oidc' &&
+      !hasIdentity(context.env ?? process.env)
+    )
+      return releaseError(
+        'npm trusted publishing requires a supported CI identity and id-token permissions.',
+        'EWORKSPACEOIDC',
+      );
+    if (!retained && entry.destination.ecosystem === 'npm')
+      validateProvenanceContext(context, entry.destination, planning.plan.head);
   }
   return result;
 }
@@ -161,6 +193,15 @@ async function retainedArtifacts(
       artifact.bytes,
       artifact.metadata,
     );
+    if (entry.destination.ecosystem === 'npm')
+      await verifyProvenance(
+        context,
+        entry.destination,
+        pkg,
+        artifact.bytes,
+        artifact.metadata,
+        planning.plan.head,
+      );
     retained.set(entry.id, artifact);
   }
   return retained;
@@ -205,7 +246,7 @@ export async function preparePublication(
     execution = previous;
   }
   await tags(context, execution, planning);
-  await retainedArtifacts(context, planning, execution);
+  const retained = await retainedArtifacts(context, planning, execution);
   // A foreign version should be rejected before starting an irreversible batch.
   for (const entry of execution.packages) {
     const pkg = planning.plan.packages.find((pkg) => pkg.id === entry.id);
@@ -214,7 +255,12 @@ export async function preparePublication(
         'Publication package is missing from its plan.',
         'EWORKSPACEJOURNAL',
       );
-    const found = await probe(context, entry.destination, pkg);
+    const found = await probe(
+      context,
+      entry.destination,
+      pkg,
+      retained.get(entry.id)?.metadata,
+    );
     const expected =
       entry.destination.ecosystem === 'npm'
         ? entry.artifact?.integrity
@@ -338,11 +384,25 @@ export async function publishPackages(
         artifact.bytes,
         artifact.metadata,
       );
+      if (entry.destination.ecosystem === 'npm')
+        await verifyProvenance(
+          context,
+          entry.destination,
+          pkg,
+          artifact.bytes,
+          artifact.metadata,
+          planning.plan.head,
+        );
       const expected =
         entry.destination.ecosystem === 'npm'
           ? entry.artifact.integrity
           : entry.artifact.sha256;
-      const found = await probe(context, entry.destination, pkg);
+      const found = await probe(
+        context,
+        entry.destination,
+        pkg,
+        artifact.metadata,
+      );
       if (found !== null && (!entry.intent || found !== expected))
         return releaseError(
           `Registry version conflicts with this batch: ${pkg.id}@${pkg.nextVersion}.`,
@@ -370,7 +430,12 @@ export async function publishPackages(
         // A successful response may precede Cargo index visibility; only a checksum is proof.
         let confirmed: string | null = null;
         for (let attempt = 0; attempt < 5; attempt++) {
-          confirmed = await probe(context, entry.destination, pkg);
+          confirmed = await probe(
+            context,
+            entry.destination,
+            pkg,
+            artifact.metadata,
+          );
           if (confirmed !== null) break;
           if (attempt < 4)
             await new Promise((resolve) =>

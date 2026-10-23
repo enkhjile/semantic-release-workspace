@@ -305,9 +305,98 @@ npm's null/no-change setting rather than forcing public visibility. Normal npm
 certificates are supported. npm packing uses the installed npm command;
 publication uses the official npm client libraries with an origin-bound transport
 agent, rejecting redirects to another scheme, host or port before sending headers.
-Provenance and OIDC trusted publishing are deferred for consumer workspaces;
-use registry credentials in this milestone. The plugin's own release workflow
-continues using standard semantic-release npm trusted publishing.
+npm trusted publishing uses package-scoped OIDC exchange credentials. Configure
+an npm trusted publisher for **each package** and the exact CI repository/workflow.
+The default `npm.trustedPublishing: "auto"` selects OIDC when a supported CI
+identity is available; `true` requires it and `false` uses configured npm
+credentials. Selected OIDC failures never fall back to another credential.
+GitHub Actions uses its identity request endpoint; GitLab CI and CircleCI use
+`NPM_ID_TOKEN` with audience `npm:registry.npmjs.org` (or the effective registry
+hostname for compatible alternate registries). Exchange occurs separately for each
+package immediately before uploading. Tokens stay in memory and are never stored
+in artifact refs or journals. Registry reads use ordinary npm read credentials or
+anonymous access; OIDC publish tokens are not used to install private dependencies.
+
+`npm.provenance` accepts `"auto"` (default), `true`, or `false`. Explicit plugin
+configuration takes precedence over package `publishConfig.provenance` and native
+npm configuration. Automatic provenance accompanies OIDC on public GitHub Actions
+or GitLab CI repositories when signing identity is available and the package is
+public. CircleCI supports OIDC without automatic provenance. Required provenance
+fails for unsupported CI, private packages/repositories or mismatched source SHAs.
+Set `npm.access: "public"` for a new scoped package; existing public scoped packages
+can retain their access level, which is checked through the registry visibility API.
+Disable provenance with `npm.provenance: false`, package publish configuration,
+`provenance=false` in `.npmrc`, or `NPM_CONFIG_PROVENANCE=false`.
+
+For GitHub Actions, grant the release job these permissions and use a GitHub-hosted
+runner with the source commit checked out:
+
+```yaml
+permissions:
+  contents: write
+  id-token: write
+```
+
+```js
+export default {
+  branches: ['main'],
+  tagFormat: 'workspace-v${version}',
+  plugins: [
+    [
+      'semantic-release-workspace',
+      {
+        npm: { trustedPublishing: true, provenance: true, access: 'public' },
+      },
+    ],
+  ],
+};
+```
+
+On GitLab.com shared runners, define both audiences explicitly:
+
+```yaml
+id_tokens:
+  NPM_ID_TOKEN:
+    aud: npm:registry.npmjs.org
+  SIGSTORE_ID_TOKEN:
+    aud: sigstore
+```
+
+On CircleCI cloud runners, expose its OIDC identity as `NPM_ID_TOKEN` and leave
+provenance automatic or disabled. The provider and trust relationship are verified
+by npm; fixture identities used in tests do not replace npm's production checks.
+See npm's [trusted publisher setup](https://docs.npmjs.com/trusted-publishers/)
+and [provenance requirements](https://docs.npmjs.com/generating-provenance-statements/).
+
+Provenance uses the official Sigstore SDK and the public Fulcio/Rekor services.
+The signed statement binds the exact tarball SHA-512, npm package/version and source
+commit; verification checks the certificate's source repository and commit, its
+trusted chain, certificate transparency and transparency-log signatures. Provenance
+is public, including workflow/source metadata. Arbitrary environment variables are
+not copied into statements. All identity/exchange/signing redirects are rejected;
+registry and attestation requests stay within their frozen registry origin.
+
+The exact signed bundle is retained with its tarball **before** upload intent.
+Retries reuse and verify that bundle, preserving its original CI run and avoiding
+new signing ledger entries. Registry confirmation requires both matching tarball
+integrity and the retained attestation. Missing/corrupt attestations leave the
+batch pending and never cause a duplicate upload. An uncertain accepted upload can
+complete from a fresh clone without new CI identity or upload credentials; a
+rejected upload obtains fresh package-scoped credentials when retried. Earlier
+pending token-mode batches retain their authentication policy when CI gains OIDC.
+Dry runs perform configuration/available CI metadata checks without network identity
+requests, token exchange, signing, packing, refs, tags or uploads. They cannot
+verify remote npm trust relationships or Sigstore availability.
+
+Private Sigstore installations can set `npm.sigstore` with `fulcioURL`, `rekorURL`,
+`tufMirrorURL` and `tufRootPath`. Use an independently trusted TUF root file, preferably
+at the same repository-relative path in every clone. The file's SHA-256 and service
+URLs are frozen with each pending batch; changing them blocks retry. URLs require
+HTTPS, except loopback HTTP for local integration testing. The default trust root
+uses Sigstore's signed TUF repository. Signing requires outbound HTTPS and an
+available local loopback socket for the redirect-guarded SDK transport. Runtime
+Sigstore 4.1.1 is the newest stable SDK supporting the Node 24.0.0 floor; newer major
+versions require a later Node 24 patch.
 
 Cargo supports crates.io and named HTTP sparse registries configured in
 `.cargo/config.toml`, `$CARGO_HOME/config.toml`, or
@@ -346,7 +435,7 @@ Prepared commits and artifacts are pushed under
 Artifacts are limited to 100 MiB each. Preserve these refs with the journal in
 backups. Before starting a batch, all destination versions are checked for conflicts.
 Before uploading, the plugin saves an intent; it confirms publication
-using npm integrity or the Cargo index checksum. Existing versions are accepted
+using npm integrity (and retained provenance when enabled) or the Cargo index checksum. Existing versions are accepted
 only when their exact bytes match and this batch already recorded an intent.
 Foreign versions, checksum mismatches, missing/corrupt artifacts, changed
 publication policy and conflicting tags stop the batch. Failed tag pushes retry
@@ -355,11 +444,13 @@ for a rerun at the same source commit. Already published registry versions are
 irreversible; recovery completes the remaining work instead of rolling them back.
 
 Integration tests use real semantic-release, native npm/Cargo packers, disposable
-Git remotes, local registries and a local mutual-TLS registry. They exercise
+Git remotes, local registries, a local mutual-TLS registry, and cryptographic
+Sigstore certificate/log fixtures with a signed local TUF repository. They exercise
 registry overrides, credential-safe redirects, access preservation, packed contents,
 private packages, clean/dry/no-change runs, hard termination, lost upload responses,
 tag failures, conflicting versions/tags, artifact corruption and fresh-clone retries.
-The test suite requires Cargo/Rust, Git, npm and OpenSSL; no public registry writes
+The test runner limits concurrency to two workers because integration cases launch
+multiple real release and packaging processes. The test suite requires Cargo/Rust, Git, npm and OpenSSL; no public registry writes
 or real credentials are used.
 
 ## Development

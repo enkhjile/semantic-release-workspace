@@ -86,6 +86,8 @@ export async function registry(tls = false) {
       CARGO_NET_RETRY: '0',
     },
     state: () => JSON.parse(readFileSync(join(root, 'registry.json'), 'utf8')),
+    trusted: (settings: Record<string, unknown> = {}) =>
+      writeFileSync(join(root, 'oidc.json'), JSON.stringify(settings)),
     control: (value: string) => writeFileSync(join(root, 'control'), value),
   };
 }

@@ -9,6 +9,15 @@ export interface Destination {
   tag?: string;
   index?: string;
   api?: string;
+  npmAuth?: 'oidc';
+  provenance?: true | 'auto';
+  sigstore?: {
+    fulcioURL: string;
+    rekorURL: string;
+    tufMirrorURL: string;
+    tufRootPath: string;
+    tufRootDigest: string;
+  };
 }
 export interface PublicationPackage {
   id: string;
@@ -40,6 +49,28 @@ export function validExecution(value: unknown): value is Execution {
         !['intent', 'published', 'tagged'].every(
           (key) => typeof entry[key] === 'boolean',
         )
+      )
+        return false;
+      if (
+        (entry.destination.npmAuth !== undefined &&
+          entry.destination.npmAuth !== 'oidc') ||
+        (entry.destination.provenance !== undefined &&
+          entry.destination.provenance !== true &&
+          entry.destination.provenance !== 'auto')
+      )
+        return false;
+      const sigstore = entry.destination.sigstore;
+      if (
+        sigstore !== undefined &&
+        (!record(sigstore) ||
+          ![
+            'fulcioURL',
+            'rekorURL',
+            'tufMirrorURL',
+            'tufRootPath',
+            'tufRootDigest',
+          ].every((key) => typeof sigstore[key] === 'string') ||
+          !/^[a-f0-9]{64}$/.test(String(sigstore.tufRootDigest)))
       )
         return false;
       if (
