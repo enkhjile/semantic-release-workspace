@@ -277,3 +277,47 @@ export async function npmPolicy(
       : {}),
   };
 }
+
+export async function npmSetChannel(
+  context: VerifyConditionsContext,
+  dest: Destination,
+  name: string,
+  version: string,
+): Promise<void> {
+  const opts = await options(context, dest, name);
+  const endpoint = `${dest.registry}/-/package/${encodeURIComponent(name)}/dist-tags`;
+  const read = async () => {
+    try {
+      const data: unknown = await npmFetch.json(endpoint, opts);
+      if (
+        !record(data) ||
+        Object.values(data).some((value) => typeof value !== 'string')
+      )
+        throw new Error();
+      return data[dest.tag ?? 'latest'];
+    } catch {
+      return releaseError(
+        'Cannot verify npm distribution channel. Check registry access and redirects.',
+      );
+    }
+  };
+  if ((await read()) === version) return;
+  let failure: unknown;
+  try {
+    await npmFetch(`${endpoint}/${encodeURIComponent(dest.tag ?? 'latest')}`, {
+      ...(await publishingOptions(context, dest, name, opts)),
+      method: 'PUT',
+      body: JSON.stringify(version),
+      headers: { 'content-type': 'application/json' },
+      ignoreBody: true,
+    });
+  } catch (error) {
+    failure = error;
+  }
+  if ((await read()) !== version) {
+    if (record(failure) && failure.code === 'EWORKSPACEOIDC') throw failure;
+    releaseError(
+      'npm channel update could not be confirmed. Check dist-tag permissions and retry the same promotion.',
+    );
+  }
+}

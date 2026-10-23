@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -71,12 +72,12 @@ export function fixture() {
     git,
     commit(message: string) {
       git(cwd, 'commit', '--allow-empty', '-m', message);
-      git(cwd, 'push', 'origin', 'main');
+      git(cwd, 'push', 'origin', 'HEAD');
       return git(cwd, 'rev-parse', 'HEAD');
     },
-    clone() {
-      const directory = join(root, 'retry');
-      git(root, 'clone', remote, directory);
+    clone(branch = 'main', name = 'retry') {
+      const directory = join(root, name);
+      git(root, 'clone', '--branch', branch, remote, directory);
       identity(directory);
       return directory;
     },
@@ -86,13 +87,24 @@ export function fixture() {
     tags() {
       return git(remote, 'tag', '--list').split('\n').filter(Boolean);
     },
-    state() {
-      return JSON.parse(
-        git(remote, 'notes', `--ref=${journalRef}`, 'show', anchor),
-      );
+    state(branch = 'main') {
+      const ref =
+        branch === 'main'
+          ? journalRef
+          : `refs/notes/workspace-release-branches/${createHash('sha256').update(branch).digest('hex')}`;
+      return JSON.parse(git(remote, 'notes', `--ref=${ref}`, 'show', anchor));
     },
     run(
       settings: {
+        branches?: (
+          | string
+          | {
+              name: string;
+              prerelease?: boolean | string;
+              channel?: string | false;
+              range?: string;
+            }
+        )[];
         dryRun?: boolean;
         failure?: 'prepare' | 'after-prepare' | 'publish';
         tagFormat?: string;

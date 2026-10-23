@@ -2,9 +2,15 @@ import { join } from 'node:path';
 import { analyzeCommits as analyzeConventionalCommits } from '@semantic-release/commit-analyzer';
 import SemanticReleaseError from '@semantic-release/error';
 import type { VerifyConditionsContext } from 'semantic-release';
-import { gt, inc, prerelease, valid } from 'semver';
+import { gt, prerelease, valid } from 'semver';
 import { parse } from 'smol-toml';
 import { attributeCommits, packageId, sharedPatterns } from './attribution.js';
+import {
+  branchType,
+  checkPackageBranches,
+  nextPackageVersion,
+  releaseRoute,
+} from './branches.js';
 import { coordinateDependencies } from './dependencies.js';
 import { discoverWorkspaces } from './discovery.js';
 import { baseline, git, readCommits, snapshot } from './journal.js';
@@ -14,10 +20,9 @@ import type { WorkspacePackage } from './workspace-types.js';
 
 function stable(value: unknown, label: string): string | null {
   if (value === undefined) return null;
-  if (typeof value === 'string' && valid(value) === value && !prerelease(value))
-    return value;
+  if (typeof value === 'string' && valid(value) === value) return value;
   throw new SemanticReleaseError(
-    `A stable semantic version is required for ${label}.`,
+    `A semantic version is required for ${label}.`,
     'EWORKSPACEVERSION',
   );
 }
@@ -51,12 +56,67 @@ export async function createVersionPlan(
   const tags = (await git(context, 'tag', '--merged', current.head, '--list'))
     .split('\n')
     .filter(Boolean);
-  const versions = new Map<string, PackageVersion>(
-    (current.journal?.planning?.versions ?? []).map((entry) => [
-      entry.id,
-      entry,
-    ]),
+  const eligible = (version: string) =>
+    !prerelease(version) ||
+    (branchType(context) === 'prerelease' &&
+      prerelease(version)?.slice(0, -1).join('.') ===
+        String(context.branch.prerelease));
+  const completed = current.history;
+  const ancestors = new Set(
+    (await git(context, 'rev-list', '--topo-order', current.head)).split('\n'),
   );
+  const versions = new Map<string, PackageVersion>();
+  const projections = new Map<
+    string,
+    import('./plan-types.js').DependencyUpdate
+  >();
+  for (const entry of completed) {
+    if (!ancestors.has(entry.head)) continue;
+    for (const version of entry.planning?.versions ?? []) {
+      if (!eligible(version.version)) continue;
+      const previous = versions.get(version.id);
+      if (!previous || gt(version.version, previous.version))
+        versions.set(version.id, version);
+    }
+  }
+  if (current.journal?.status === 'pending') {
+    versions.clear();
+    for (const version of current.journal.planning?.versions ?? [])
+      versions.set(version.id, version);
+  }
+  const positions = new Map([...ancestors].map((head, index) => [head, index]));
+  const projectionHistory = completed
+    .filter(
+      (entry) =>
+        ancestors.has(entry.head) &&
+        (entry.planning?.plan.release?.type !== 'prerelease' ||
+          (branchType(context) === 'prerelease' &&
+            entry.planning.plan.release.prerelease ===
+              String(context.branch.prerelease))),
+    )
+    .sort(
+      (left, right) =>
+        (positions.get(left.head) ?? 0) - (positions.get(right.head) ?? 0),
+    );
+  for (const version of versions.values()) {
+    // Later batches carry projections for unchanged packages, including dev-only
+    // changes. Legacy journals may be the only record of those earlier releases.
+    const carrier = projectionHistory.find((entry) =>
+      entry.planning?.versions.some(
+        (candidate) =>
+          candidate.id === version.id &&
+          candidate.version === version.version &&
+          candidate.head === version.head,
+      ),
+    );
+    for (const update of carrier?.planning?.plan.packages.find(
+      (pkg) => pkg.id === version.id,
+    )?.dependencyUpdates ?? [])
+      projections.set(
+        JSON.stringify([update.manifestPath, update.field]),
+        update,
+      );
+  }
   const packages: PackagePlan[] = [];
   const baselines: {
     pkg: WorkspacePackage;
@@ -74,7 +134,7 @@ export async function createVersionPlan(
     for (const tag of tags) {
       if (!tag.startsWith(prefix)) continue;
       const candidate = tag.slice(prefix.length);
-      if (valid(candidate) !== candidate || prerelease(candidate)) continue;
+      if (valid(candidate) !== candidate || !eligible(candidate)) continue;
       if (taggedVersion === undefined || gt(candidate, taggedVersion)) {
         taggedVersion = candidate;
         tagHead = await git(context, 'rev-parse', `refs/tags/${tag}^{commit}`);
@@ -118,7 +178,7 @@ export async function createVersionPlan(
       path: pkg.path,
       private: pkg.private,
       currentVersion: version,
-      nextVersion: type ? (version ? inc(version, type) : '1.0.0') : null,
+      nextVersion: type ? nextPackageVersion(context, version, type) : null,
       type,
       commits: selected,
       dependencyUpdates: [],
@@ -128,9 +188,42 @@ export async function createVersionPlan(
     inventory,
     packages,
     workspace,
-    current.journal?.planning?.dependencyRanges,
+    current.journal?.status === 'pending'
+      ? current.journal.planning?.dependencyRanges
+      : [...projections.values()],
+    (version, type) => nextPackageVersion(context, version, type),
   );
+  checkPackageBranches(
+    context,
+    packages,
+    current.history,
+    current.reservations,
+    ancestors,
+  );
+  const allocatedTags = new Set(
+    (await git(context, 'tag', '--list')).split('\n'),
+  );
+  for (const pkg of packages) {
+    if (!pkg.nextVersion || pkg.private) continue;
+    const tag = `${pkg.ecosystem}/${pkg.name}@${pkg.nextVersion}`;
+    if (!allocatedTags.has(tag)) continue;
+    const prepared =
+      current.journal?.status === 'pending'
+        ? current.journal.execution?.prepared
+        : undefined;
+    if (
+      !prepared ||
+      (await git(context, 'rev-parse', `refs/tags/${tag}^{commit}`)) !==
+        prepared
+    )
+      throw new SemanticReleaseError(
+        `Package tag already allocates ${pkg.id}@${pkg.nextVersion}.`,
+        'EWORKSPACETAG',
+      );
+  }
+  const route = releaseRoute(context);
   const plan: ReleasePlan = {
+    ...(route ? { release: route } : {}),
     schemaVersion: 1,
     head: current.head,
     baseHead: baseline(current),

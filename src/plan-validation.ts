@@ -1,13 +1,11 @@
-import { prerelease, valid } from 'semver';
+import { valid } from 'semver';
 import type { PlanningState } from './plan-types.js';
 import { record } from './workspace-files.js';
 
 export const oid = (value: unknown): value is string =>
   typeof value === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value);
 function version(value: unknown): value is string {
-  return (
-    typeof value === 'string' && valid(value) === value && !prerelease(value)
-  );
+  return typeof value === 'string' && valid(value) === value;
 }
 function path(value: unknown): value is string {
   return (
@@ -45,6 +43,19 @@ export function validPlanning(value: unknown): value is PlanningState {
     return false;
   const plan = value.plan;
   if (
+    (plan.release !== undefined &&
+      (!record(plan.release) ||
+        typeof plan.release.branch !== 'string' ||
+        !['release', 'maintenance', 'prerelease'].includes(
+          String(plan.release.type),
+        ) ||
+        !(
+          plan.release.channel === null ||
+          typeof plan.release.channel === 'string'
+        ) ||
+        (plan.release.type === 'prerelease' &&
+          (typeof plan.release.prerelease !== 'string' ||
+            valid(`1.0.0-${plan.release.prerelease}.1`) === null)))) ||
     plan.schemaVersion !== 1 ||
     !oid(plan.head) ||
     !(plan.baseHead === null || oid(plan.baseHead)) ||

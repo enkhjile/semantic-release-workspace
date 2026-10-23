@@ -30,6 +30,7 @@ import {
   readArtifact,
   refFor,
   releaseError,
+  releaseScope,
   retainArtifact,
 } from './release-io.js';
 
@@ -183,7 +184,11 @@ async function retainedArtifacts(
   for (const entry of execution.packages) {
     if (!entry.artifact) continue;
     const pkg = planning.plan.packages.find((pkg) => pkg.id === entry.id);
-    if (!pkg || entry.artifact.ref !== refFor(planning.plan.head, entry.id))
+    if (
+      !pkg ||
+      entry.artifact.ref !==
+        refFor(planning.plan.head, entry.id, releaseScope(context))
+    )
       return releaseError(
         'Retained artifact belongs to a different release.',
         'EWORKSPACEARTIFACT',
@@ -328,7 +333,7 @@ export async function publishPackages(
       if (!entry || !pkg) continue;
       if (!entry.artifact) {
         // An artifact ref may have reached the remote just before a process crash.
-        const ref = refFor(planning.plan.head, id);
+        const ref = refFor(planning.plan.head, id, releaseScope(context));
         const orphan = await fetchRef(context, ref);
         if (orphan) {
           const bytes = await command(context, 'git', [
@@ -374,7 +379,10 @@ export async function publishPackages(
         }
         await persist();
       }
-      if (entry.artifact.ref !== refFor(planning.plan.head, id))
+      if (
+        entry.artifact.ref !==
+        refFor(planning.plan.head, id, releaseScope(context))
+      )
         return releaseError(
           'Retained artifact belongs to a different release.',
           'EWORKSPACEARTIFACT',
@@ -485,7 +493,10 @@ export async function recoverManifests(
     return;
   const prepared = current.journal.execution.prepared;
   if (
-    (await fetchRef(context, refFor(current.head))) !== prepared ||
+    (await fetchRef(
+      context,
+      refFor(current.head, undefined, releaseScope(context)),
+    )) !== prepared ||
     (await git(context, 'rev-parse', `${prepared}^`)) !== current.head
   )
     return releaseError(

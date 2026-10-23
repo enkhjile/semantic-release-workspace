@@ -1,13 +1,16 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import SemanticReleaseError from '@semantic-release/error';
 import type { VerifyConditionsContext } from 'semantic-release';
+import { valid } from 'semver';
+import { branchType } from './branches.js';
 import type { PlanningState } from './plan-types.js';
 import { oid, validPlanning } from './plan-validation.js';
 import { type Execution, validExecution } from './publication-state.js';
 
 const execute = promisify(execFile);
-const journalRef = 'refs/notes/semantic-release-workspace';
+const legacyRef = 'refs/notes/semantic-release-workspace';
 
 export interface Journal {
   schemaVersion: 1 | 2 | 3;
@@ -20,7 +23,16 @@ export interface Journal {
   execution?: Execution;
 }
 
+export function journalRef(context: VerifyConditionsContext): string {
+  return branchType(context) === 'release' &&
+    'main' in context.branch &&
+    context.branch.main
+    ? legacyRef
+    : `refs/notes/workspace-release-branches/${createHash('sha256').update(context.branch.name).digest('hex')}`;
+}
 export interface Snapshot {
+  history: Journal[];
+  reservations: Journal[];
   anchor: string;
   head: string;
   journal: Journal | undefined;
@@ -45,7 +57,7 @@ export async function gitOutput(
   return executeGit(context, args);
 }
 
-async function executeGit(
+export async function executeGit(
   context: GitContext,
   args: string[],
   input?: string,
@@ -93,7 +105,8 @@ function parseJournal(raw: string): Journal {
       (value.baseHead === null || oid(value.baseHead)) &&
       'batchTag' in value &&
       typeof value.batchTag === 'string' &&
-      /^workspace-v\d+\.\d+\.\d+$/.test(value.batchTag)
+      value.batchTag.startsWith('workspace-v') &&
+      valid(value.batchTag.slice(11)) !== null
     ) {
       const result = value as Journal;
       if (
@@ -168,6 +181,10 @@ function parseJournal(raw: string): Journal {
   );
 }
 
+const noteCache = new Map<
+  string,
+  { tip: string; notes: { object: string; entry: Journal }[] }
+>();
 export async function snapshot(
   context: VerifyConditionsContext,
 ): Promise<Snapshot> {
@@ -185,35 +202,95 @@ export async function snapshot(
       'EWORKSPACEHISTORY',
     );
   }
-  const remoteRef = await git(
+  const ref = journalRef(context);
+  const advertised = await git(
     context,
     'ls-remote',
     '--refs',
     '--',
     repositoryUrl,
-    journalRef,
+    legacyRef,
+    'refs/notes/workspace-release-*',
   );
-  if (!remoteRef) {
-    if (await git(context, 'tag', '--merged', head, '--list', 'workspace-v*')) {
+  const remoteRefs = advertised
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => line.split(/\s+/)[1] as string)
+    .filter(
+      (name) =>
+        name === legacyRef ||
+        name.startsWith('refs/notes/workspace-release-branches/') ||
+        name.startsWith('refs/notes/workspace-release-history/'),
+    );
+  const history: Journal[] = [];
+  const reservations: Journal[] = [];
+  let journal: Journal | undefined;
+  for (const remote of remoteRefs) {
+    const tip =
+      advertised
+        .split('\n')
+        .find((line) => line.endsWith(`\t${remote}`))
+        ?.split('\t')[0] ?? '';
+    const cacheKey = JSON.stringify([context.cwd, repositoryUrl, remote]);
+    let cached = noteCache.get(cacheKey);
+    if (!cached || cached.tip !== tip) {
+      await git(
+        context,
+        'fetch',
+        '--no-tags',
+        '--',
+        repositoryUrl,
+        `+${remote}:${remote}`,
+      );
+      const notes = (await git(context, 'notes', `--ref=${remote}`, 'list'))
+        .split('\n')
+        .filter(Boolean);
+      const parsed = [];
+      for (const note of notes) {
+        const object = note.split(' ')[1] as string;
+        parsed.push({
+          object,
+          entry: parseJournal(
+            await git(context, 'notes', `--ref=${remote}`, 'show', object),
+          ),
+        });
+      }
+      cached = { tip, notes: parsed };
+      noteCache.set(cacheKey, cached);
+    }
+    for (const { object, entry } of cached.notes) {
+      if (entry.status === 'pending') {
+        if (
+          entry.branch === context.branch.name &&
+          object === anchor &&
+          remote !== ref
+        )
+          throw new SemanticReleaseError(
+            'The pending branch role changed. Restore its branch configuration before retrying.',
+            'EWORKSPACEPLAN',
+          );
+        reservations.push(entry);
+      }
+      if (
+        entry.status === 'complete' &&
+        !history.some((old) => old.batchTag === entry.batchTag)
+      )
+        history.push(entry);
+      if (remote === ref && object === anchor) journal = entry;
+    }
+  }
+  if (!journal) {
+    if (
+      (!remoteRefs.length ||
+        history.some((entry) => entry.branch === context.branch.name)) &&
+      (await git(context, 'tag', '--merged', head, '--list', 'workspace-v*'))
+    )
       throw new SemanticReleaseError(
         'Workspace batch tags exist but their completion journal is missing.',
         'EWORKSPACEJOURNAL',
-        'Restore the journal before releasing; batch tags alone do not prove completion.',
       );
-    }
-    return { anchor, head, journal: undefined };
+    return { anchor, head, journal, history, reservations };
   }
-  await git(
-    context,
-    'fetch',
-    '--no-tags',
-    '--',
-    repositoryUrl,
-    `+${journalRef}:${journalRef}`,
-  );
-  const journal = parseJournal(
-    await git(context, 'notes', `--ref=${journalRef}`, 'show', anchor),
-  );
   if (journal.branch !== context.branch.name) {
     throw new SemanticReleaseError(
       'The journal belongs to a different release branch.',
@@ -251,7 +328,7 @@ export async function snapshot(
       journal.baseHead,
       journal.head,
     );
-  return { anchor, head, journal };
+  return { anchor, head, journal, history, reservations };
 }
 
 export function baseline(current: Snapshot): string | null {
@@ -341,9 +418,25 @@ export async function writeJournal(
       dependencyRanges: [...ranges.values()],
     };
   }
+  const ref = journalRef(context);
+  if (status === 'complete') {
+    const historyRef = `refs/notes/workspace-release-history/${createHash('sha256').update(context.branch.name).digest('hex')}`;
+    await executeGit(
+      context,
+      ['notes', `--ref=${historyRef}`, 'add', '-f', '-F', '-', current.head],
+      JSON.stringify(journal),
+    );
+    await git(
+      context,
+      'push',
+      '--',
+      context.options.repositoryUrl ?? '',
+      `${historyRef}:${historyRef}`,
+    );
+  }
   await executeGit(
     context,
-    ['notes', `--ref=${journalRef}`, 'add', '-f', '-F', '-', current.anchor],
+    ['notes', `--ref=${ref}`, 'add', '-f', '-F', '-', current.anchor],
     JSON.stringify(journal),
   );
   // Normal push rejects a conflicting journal update. CI must serialize releases.
@@ -352,6 +445,6 @@ export async function writeJournal(
     'push',
     '--',
     context.options.repositoryUrl ?? '',
-    `${journalRef}:${journalRef}`,
+    `${ref}:${ref}`,
   );
 }

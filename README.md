@@ -7,7 +7,7 @@ Workspace-aware monorepo releases for semantic-release.
 The plugin discovers pnpm, npm, Yarn and Cargo workspaces, attributes commits,
 plans independent versions and coordinates dependencies. It updates release
 manifests, publishes npm packages and Cargo crates, and creates immutable
-per-package tags through the real semantic-release lifecycle. Dry runs are
+per-package tags through the real semantic-release lifecycle. Prereleases, maintenance lines and stable branch promotions are supported for npm and Cargo. Dry runs are
 read-only; interrupted batches retain exact artifacts for safe retries, including
 from a fresh clone. Private packages and `publish = false` crates participate in
 planning without being published.
@@ -105,8 +105,7 @@ The raw TOML manifest is retained without rewriting its package/dependency table
 
 Discovery parses manifests directly: it requires no Rust installation, does not
 invoke Cargo, and does not create a lockfile, resolve registry dependencies, or
-modify source files. Cargo version updates and crates.io publishing will need a
-later milestone.
+modify source files. Native Cargo tools are required only for packaging and publication.
 
 ## Package attribution and version planning
 
@@ -138,14 +137,14 @@ Conventional Commit analyzer options, such as `preset` and `releaseRules`, can b
 supplied on the same plugin configuration. Each package receives its own strongest
 major/minor/patch signal. Private packages participate but remain non-publishable.
 
-Package baselines use completed journal versions or a newer reachable stable
+Package baselines use completed ancestor journal versions or a newer reachable
 `npm/<name>@<version>` or `cargo/<name>@<version>` tag. Tagged history is excluded
 from that package's commits. Each package keeps commits since its own last
 completed version; another package's batch does not consume its unreleased history.
-With no recorded baseline, a declared stable manifest
+With no recorded baseline, a declared semantic manifest
 version is incremented; Cargo `version.workspace = true` is resolved. A package
 with no declared version starts at `1.0.0` when it first needs a release. Invalid
-or prerelease baselines fail instead of being coerced. Inherited Cargo package
+versions fail instead of being coerced. Prerelease branches admit their own identifier and stable baselines; stable branches use stable release history. Inherited Cargo package
 versions are planned independently and materialized in each prepared member manifest.
 
 ### Dependency coordination
@@ -177,6 +176,85 @@ the journal. Later plans use those ranges while their original manifest values
 remain unchanged; an edited dependency requirement takes precedence. This keeps
 successive planning batches consistent without writing manifests. In `publish: false` mode these records are planning history, not evidence of registry publication.
 
+## Prereleases, maintenance and release channels
+
+Configure branches through semantic-release's standard `branches` option:
+
+```js
+export default {
+  branches: [
+    '1.x',
+    'main',
+    'next',
+    { name: 'beta', prerelease: true },
+    { name: 'preview', prerelease: 'rc', channel: 'preview' },
+  ],
+  tagFormat: 'workspace-v${version}',
+  plugins: [['semantic-release-workspace', { publish: true }]],
+};
+```
+
+Only branches that exist on the release remote become active. Create maintenance
+branches from the corresponding historical release, then advance the higher
+branch before publishing backports. semantic-release validates the coordinator's
+branch ranges. The workspace planner also rejects package versions already
+allocated on another branch and package bumps that cross an outstanding higher
+branch release. If a dependency-only bump hits that boundary, release a higher
+version of the dependent on the higher branch, or merge that release first.
+A pending stable batch reserves its coordinator version across all stable branches, including unrelated packages. Finish that batch before starting another stable batch or channel promotion. Prerelease branches use separate identifiers and may progress independently when package allocations do not conflict.
+
+Maintenance `N.x` branches keep each package within its own major line;
+`N.N.x` branches keep each within its own minor line. Package versions need not
+match the coordinator version or the numbers in the branch name.
+
+On a prerelease branch, a package can progress through `1.2.0-beta.1`,
+`1.2.0-beta.2`, and so on. A stronger commit signal can advance its target stable
+version. Runtime and peer dependency bumps use the same branch policy; npm and
+Cargo dependencies explicitly admit the target prerelease where required.
+Stable branches exclude prerelease baselines, so merging prerelease work produces
+stable package versions with coordinated stable dependency ranges. Different
+prerelease branches keep separate counters, histories and immutable artifacts,
+even when they release the same source commit.
+
+Use a single prerelease identifier containing a letter or hyphen, such as
+`beta`, `rc` or `beta-test`. Dotted and numeric-only identifiers are rejected
+before writes: semantic-release 25.0.9's own last-release lookup cannot recover
+them reliably. See its [last-release implementation](https://github.com/semantic-release/semantic-release/blob/v25.0.9/lib/get-last-release.js).
+
+npm dist-tags follow the normalized branch channel: default channel → `latest`,
+`next` → `next`, and numeric ranges such as `1.x` → `release-1.x`, matching
+`@semantic-release/npm`. Custom channels belong in `branches[].channel`.
+In multi-branch mode these channels take precedence over npm tag settings;
+the original single default branch mode retains explicit npm tag overrides.
+Cargo registries have no dist-tags: prereleases use SemVer, and branch/channel
+membership is recorded in Git release history.
+
+Merging a higher stable branch into a lower one invokes the real `addChannel`
+hook. It verifies every original retained artifact and registry checksum, then
+moves npm dist-tags without rebuilding, republishing or signing again. Cargo
+versions are verified and reused without another upload. Promotion includes
+packages unchanged in the latest source batch. Historical promotions require
+the completed publication plans and retained artifacts for those versions;
+planning-only records do not prove registry publication.
+
+Promotion intent is written to `refs/notes/workspace-release-channels/<branch-hash>`
+before semantic-release records its batch channel. An unfinished promotion is
+recovered at startup on the same source commit, even if core no longer calls
+`addChannel`. Registry and authentication policies remain fixed. Accepted updates
+are confirmed by reading the tag, allowing a fresh clone to finish without CI
+credentials when all tags already match. Missing updates use fresh credentials.
+For npm OIDC, enable **Allow npm dist-tag** on the trusted publisher as described
+in [npm's trusted publishing documentation](https://docs.npmjs.com/trusted-publishers/).
+Promotion never creates replacement provenance bundles.
+
+Dry runs preview the version plan or channel promotion without source, remote
+ref, registry, identity-token or signing mutations. Promotion inspection reads
+existing registry checksums and retained provenance. Registry redirects use the
+same frozen-origin credential guard as publication.
+
+See semantic-release's [branch configuration](https://semantic-release.org/foundation/workflow-configuration/)
+and [distribution channel workflow](https://semantic-release.org/recipes/release-workflow/distribution-channels/).
+
 ## Batch lifecycle
 
 Load the package directly through `plugins` in a consumer repository:
@@ -189,17 +267,14 @@ export default {
 };
 ```
 
-Run `semantic-release` from a clean repository root, with one stable release
-branch, full Git history, and permission to push tags, Git notes and `refs/semantic-release-workspace/*`. Serialize
-release jobs for the repository. Other release branches, prereleases, dirty
-checkouts, and running from a package subdirectory are rejected in this milestone.
+Run `semantic-release` from a clean repository root, with full Git history and permission to push tags, Git notes and `refs/semantic-release-workspace/*`. Serialize release jobs for the entire repository, including different branches. Dirty checkouts and running from a package subdirectory are rejected.
 
 Do not add a separate root commit analyzer or npm publisher to this consumer
 configuration. The coordinator owns analysis, manifest preparation, publication and package tags. This repository's own `release.config.mjs` continues
 using standard plugins to version and publish the plugin package itself.
 
 The exported hooks are `verifyConditions`, `analyzeCommits`, `verifyRelease`,
-`generateNotes`, `prepare`, `publish`, `success`, and `fail`. Package plans use
+`generateNotes`, `prepare`, `publish`, `addChannel`, `success`, and `fail`. Package plans use
 the standard Conventional Commit analyzer. At least one planned package release
 triggers a batch; documentation/chore-only changes do not trigger one. An empty
 inventory retains the original repository-wide lifecycle proof behavior.
@@ -207,11 +282,11 @@ inventory retains the original repository-wide lifecycle proof behavior.
 ### Batch tags and completion
 
 semantic-release core creates and pushes the batch tag. A batch starts at
-`workspace-v1.0.0`; later attempts increment its patch version, regardless of the
-underlying commit's release type. These are coordinator attempt versions, not
-package versions.
+`workspace-v1.0.0`. The original single stable branch mode keeps a patch counter. Multi-branch runs use the strongest planned release type so semantic-release can apply its branch ranges and prerelease counters. These coordinator attempt versions remain independent of package versions.
 
-Completion is recorded separately in `refs/notes/semantic-release-workspace`.
+The primary release branch retains `refs/notes/semantic-release-workspace`; other branches use `refs/notes/workspace-release-branches/<branch-hash>`. Completed plans are archived in `refs/notes/workspace-release-history/<branch-hash>`. Preserve these refs when backing up or migrating a release repository.
+
+`refs/notes/semantic-release-0-workspace` carries coordinator channel metadata for semantic-release 25. Its commit-level note reader otherwise confuses root journals with channels and can lose a channel when prerelease branches tag the same commit. The plugin merges canonical core channel notes into this compatibility record before tagging and after promotion. Package versions and actual npm dist-tags remain governed by their frozen plans. If a legacy root release has unreadable channel metadata, a normal run repairs only that metadata and exits with `EWORKSPACECHANNELRETRY`; rerun to resume its frozen batch. A dry run reports the required repair without writing it.
 The journal is a versioned JSON note attached to the repository's single root
 commit; it records the release branch, source commit, previous completed source
 commit, attempted batch tag, and `pending` or `complete` status. Schema 2 adds
@@ -231,7 +306,7 @@ batch tag. A tag from a failed run therefore cannot hide unfinished work.
 
 After failure, rerun the same source commit, including from a fresh clone.
 The plugin fetches its journal from the configured release remote. A pending
-batch blocks newer source commits until the original source commit is recovered.
+batch blocks newer source commits on its branch until the original source commit is recovered.
 A retry after a pushed tag receives another batch tag; a retry before tagging can
 use the original candidate tag. The logical work and completion baseline remain
 the same. Package versions and the stored plan remain identical across retries.

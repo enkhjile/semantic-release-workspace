@@ -88,7 +88,7 @@ export function validExecution(value: unknown): value is Execution {
         (!record(entry.artifact) ||
           !oid(entry.artifact.commit) ||
           typeof entry.artifact.ref !== 'string' ||
-          !/^refs\/semantic-release-workspace\/artifacts\/[a-f0-9]+\/[a-f0-9]{64}$/.test(
+          !/^refs\/semantic-release-workspace\/artifacts\/(?:[a-f0-9]{64}\/)?[a-f0-9]+\/[a-f0-9]{64}$/.test(
             entry.artifact.ref,
           ) ||
           typeof entry.artifact.sha256 !== 'string' ||

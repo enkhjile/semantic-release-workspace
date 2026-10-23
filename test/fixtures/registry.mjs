@@ -8,7 +8,13 @@ const directory = process.argv[2];
 const stateFile = join(directory, 'registry.json');
 writeFileSync(
   stateFile,
-  JSON.stringify({ npm: {}, cargo: {}, uploads: [], requests: [] }),
+  JSON.stringify({
+    npm: {},
+    npmTags: {},
+    cargo: {},
+    uploads: [],
+    requests: [],
+  }),
 );
 let base;
 const handler = async (req, res) => {
@@ -179,7 +185,21 @@ const handler = async (req, res) => {
       (control !== 'reject-second' || state.uploads.length > 0)
     )
       return json({ error: 'injected rejection' }, 503);
-    if (path === '/cargo/api/v1/crates/new') {
+    if (path.startsWith('/-/package/') && path.includes('/dist-tags/')) {
+      const [name, tag] = path.slice('/-/package/'.length).split('/dist-tags/');
+      if (
+        trusted &&
+        req.headers.authorization !==
+          `Bearer ${state.exchanges?.filter((entry) => entry.name === name).at(-1)?.token}`
+      )
+        return json({}, 401);
+      const version = JSON.parse(bytes);
+      if (!state.npm[name]?.[version]) return json({}, 404);
+      state.npmTags[name] ??= {};
+      state.npmTags[name][tag] = version;
+      state.channelUpdates ??= [];
+      state.channelUpdates.push({ name, tag, version });
+    } else if (path === '/cargo/api/v1/crates/new') {
       const length = bytes.readUInt32LE(0);
       const meta = JSON.parse(bytes.subarray(4, 4 + length));
       const artifact = bytes.subarray(8 + length);
@@ -235,6 +255,11 @@ const handler = async (req, res) => {
           access: data.access,
           metadata: meta,
           artifact: artifact.toString('base64'),
+        };
+        state.npmTags ??= {};
+        state.npmTags[data.name] = {
+          ...state.npmTags[data.name],
+          ...data['dist-tags'],
         };
         state.uploads.push(`npm:${data.name}@${version}`);
       }
@@ -330,12 +355,17 @@ const handler = async (req, res) => {
         : [],
     });
   }
+  if (path.startsWith('/-/package/') && path.endsWith('/dist-tags'))
+    return json(
+      state.npmTags[path.slice('/-/package/'.length, -'/dist-tags'.length)] ??
+        {},
+    );
   const name = path.slice(1);
   const versions = state.npm[name];
   if (!versions) return json({ error: 'not found' }, 404);
   return json({
     name,
-    'dist-tags': { latest: Object.keys(versions).at(-1) },
+    'dist-tags': state.npmTags[name],
     versions: Object.fromEntries(
       Object.entries(versions).map(([version, entry]) => [
         version,

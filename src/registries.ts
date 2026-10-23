@@ -12,6 +12,7 @@ import { basename, join, resolve } from 'node:path';
 import type { VerifyConditionsContext } from 'semantic-release';
 import { parse, stringify } from 'smol-toml';
 import { archiveFile } from './archive.js';
+import { npmChannel, releaseRoute } from './branches.js';
 import { cargoPolicy, cargoUserAgent } from './cargo-identity.js';
 import { git } from './journal.js';
 import { editManifest } from './manifests.js';
@@ -129,6 +130,9 @@ export async function destination(
             ? null
             : nativeAccess;
     const tag =
+      (releaseRoute(context)
+        ? npmChannel(context.branch.channel)
+        : undefined) ??
       options.tag ??
       publish.tag ??
       (await command(context, 'npm', ['config', 'get', 'tag']))

@@ -131,7 +131,7 @@ function npmEdges(
       if (path) range = '*';
       if (!validRange(range))
         dependencyError(`Unsupported internal workspace reference: ${spec}`);
-      if (!satisfies(current, range)) {
+      if (!satisfies(current, range, { includePrerelease: true })) {
         if (protocol === 'workspace')
           dependencyError(
             `Workspace dependency does not accept its current version: ${spec}`,
@@ -320,6 +320,10 @@ export function coordinateDependencies(
   packages: PackagePlan[],
   workspace: Record<string, unknown>,
   previousRanges: DependencyUpdate[] = [],
+  nextVersion: (current: string | null, type: ReleaseType) => string | null = (
+    current,
+    type,
+  ) => (current ? inc(current, type) : '1.0.0'),
 ): { groups: string[][]; dependencyRanges: DependencyUpdate[] } {
   const byId = new Map(packages.map((pkg) => [pkg.id, pkg]));
   const applied = new Map<string, DependencyUpdate>();
@@ -361,9 +365,7 @@ export function coordinateDependencies(
       const required: ReleaseType = edge.kind === 'peer' ? 'major' : 'patch';
       if (!owner.type || rank[owner.type] < rank[required]) {
         owner.type = required;
-        owner.nextVersion = owner.currentVersion
-          ? inc(owner.currentVersion, required)
-          : '1.0.0';
+        owner.nextVersion = nextVersion(owner.currentVersion, required);
         changed = true;
       }
     }

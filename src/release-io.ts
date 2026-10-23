@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import SemanticReleaseError from '@semantic-release/error';
 import type { VerifyConditionsContext } from 'semantic-release';
+import { releaseRoute } from './branches.js';
 import { type GitContext, git } from './journal.js';
 import type { ManifestChange } from './manifests.js';
 
@@ -40,8 +41,12 @@ export async function command(
     );
   }
 }
-export const refFor = (head: string, id?: string) =>
-  `refs/semantic-release-workspace/${id ? `artifacts/${head}/${digest(id)}` : `prepared/${head}`}`;
+export const refFor = (head: string, id?: string, scope?: string) =>
+  `refs/semantic-release-workspace/${id ? `artifacts/${scope ? `${scope}/` : ''}${head}/${digest(id)}` : `prepared/${scope ? `${scope}/` : ''}${head}`}`;
+export const releaseScope = (context: VerifyConditionsContext) => {
+  const route = releaseRoute(context);
+  return route ? digest(JSON.stringify(route)) : undefined;
+};
 export async function fetchRef(
   context: VerifyConditionsContext,
   ref: string,
@@ -161,7 +166,11 @@ export async function preparedCommit(
       await git(staged, 'write-tree'),
       head,
     );
-    await pushRef(context, refFor(head), commit);
+    await pushRef(
+      context,
+      refFor(head, undefined, releaseScope(context)),
+      commit,
+    );
     return commit;
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -209,7 +218,7 @@ export async function retainArtifact(
     .toString()
     .trim();
   const commit = await commitTree(context, tree, prepared);
-  const ref = refFor(head, id);
+  const ref = refFor(head, id, releaseScope(context));
   await pushRef(context, ref, commit);
   return {
     ref,

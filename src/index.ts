@@ -11,6 +11,14 @@ import type {
   VerifyConditionsContext,
   VerifyReleaseContext,
 } from 'semantic-release';
+import {
+  assertPendingBranches,
+  branchType,
+  coordinatorType,
+  npmChannel,
+} from './branches.js';
+import { recordChannels, repairChannels } from './channel-notes.js';
+import { planPromotion, promotionSource, recoverChannels } from './channels.js';
 import { discoverWorkspaces } from './discovery.js';
 import {
   commitsSinceCompletion,
@@ -35,16 +43,23 @@ export async function verifyConditions(
 ): Promise<void> {
   if (
     // biome-ignore lint/suspicious/noTemplateCurlyInString: semantic-release expands this placeholder.
-    context.options.tagFormat !== 'workspace-v${version}' ||
-    context.branches.length !== 1 ||
-    !('type' in context.branch) ||
-    context.branch.type !== 'release'
+    context.options.tagFormat !== 'workspace-v${version}'
   ) {
     throw new SemanticReleaseError(
-      'Use one stable release branch and the documented workspace tag format.',
+      'Use the documented workspace tag format.',
       'EWORKSPACECONFIG',
     );
   }
+  npmChannel(context.branch.channel);
+  if (
+    branchType(context) === 'prerelease' &&
+    (String(context.branch.prerelease).includes('.') ||
+      /^\d+$/.test(String(context.branch.prerelease)))
+  )
+    throw new SemanticReleaseError(
+      'Use a prerelease identifier containing a letter or hyphen and no dots; semantic-release 25 cannot recover numeric or dotted identifiers.',
+      'EWORKSPACECONFIG',
+    );
   const root = await git(context, 'rev-parse', '--show-toplevel');
   if (
     (await realpath(context.cwd ?? process.cwd())) !== (await realpath(root))
@@ -68,38 +83,47 @@ export async function verifyConditions(
     inventory.packages.length,
     inventory.packages.filter((pkg) => !pkg.private).length,
   );
-  await snapshot(context);
+  const current = await snapshot(context);
+  await repairChannels(context, current);
+  await recoverChannels(config, context);
 }
 
 export async function analyzeCommits(
   config: PluginConfig,
   context: AnalyzeCommitsContext,
-): Promise<'patch' | undefined> {
+): Promise<import('./plan-types.js').ReleaseType | undefined> {
   const planning = await createVersionPlan(config, context);
   if (planning.plan.packages.length)
     return planning.current.journal?.status === 'pending' ||
       planning.plan.packages.some((pkg) => pkg.type)
-      ? 'patch'
+      ? coordinatorType(context, planning.plan.packages)
       : undefined;
   const { current, commits } = await commitsSinceCompletion(context);
   const release = await analyzeConventionalCommits(config, {
     ...context,
     commits,
   });
-  return current.journal?.status === 'pending' || release ? 'patch' : undefined;
+  if (current.journal?.status === 'pending' || release) {
+    assertPendingBranches(context, current.reservations);
+    return 'patch';
+  }
+  return undefined;
 }
 
 export async function verifyRelease(
   _config: PluginConfig,
   context: VerifyReleaseContext,
 ): Promise<void> {
-  if (context.nextRelease.type !== 'patch') {
+  const planning = await createVersionPlan(_config, context);
+  if (
+    context.nextRelease.type !==
+    coordinatorType(context, planning.plan.packages)
+  ) {
     throw new SemanticReleaseError(
       'The workspace coordinator must own commit analysis.',
       'EWORKSPACECONFIG',
     );
   }
-  const planning = await createVersionPlan(_config, context);
   await preflight(_config, context, planning);
 }
 
@@ -107,6 +131,8 @@ export async function generateNotes(
   config: PluginConfig,
   context: GenerateNotesContext,
 ): Promise<string> {
+  const promotion = await planPromotion(config, context);
+  if (promotion) return promotion;
   const planning = await createVersionPlan(config, context);
   if (planning.plan.packages.length)
     return planNotes(planning.plan, publishing(config));
@@ -139,6 +165,7 @@ export async function prepare(
       planning,
       context.nextRelease.gitTag,
     );
+    await recordChannels(context, planning.plan.head);
     return;
   }
   await writeJournal(
@@ -150,6 +177,7 @@ export async function prepare(
       ? planning
       : undefined,
   );
+  await recordChannels(context, planning.plan.head);
 }
 
 export async function publish(config: PluginConfig, context: PublishContext) {
@@ -170,10 +198,27 @@ export async function publish(config: PluginConfig, context: PublishContext) {
   return { name: 'Workspace version plan', plan };
 }
 
+export async function addChannel(
+  config: PluginConfig,
+  context: PublishContext,
+) {
+  await recoverChannels(config, context);
+  await recordChannels(
+    context,
+    await git(
+      context,
+      'rev-parse',
+      `refs/tags/${context.nextRelease.gitTag}^{commit}`,
+    ),
+  );
+  return { name: 'Workspace channel promotion' };
+}
+
 export async function success(
   config: PluginConfig,
   context: SuccessContext,
 ): Promise<void> {
+  if (await promotionSource(context)) return;
   const planning = await createVersionPlan(config, context);
   await writeJournal(
     context,

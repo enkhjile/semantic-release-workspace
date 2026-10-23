@@ -29,6 +29,12 @@ export interface PackagePlan {
   dependencyUpdates: DependencyUpdate[];
 }
 export interface ReleasePlan {
+  release?: {
+    branch: string;
+    type: string;
+    channel: string | null;
+    prerelease?: string;
+  };
   schemaVersion: 1;
   head: string;
   baseHead: string | null;

@@ -23,7 +23,7 @@ const failure = {
 try {
   const result = await semanticRelease(
     {
-      branches: ['main'],
+      branches: settings.branches ?? ['main'],
       repositoryUrl,
       // biome-ignore lint/suspicious/noTemplateCurlyInString: semantic-release expands this placeholder.
       tagFormat: settings.tagFormat ?? 'workspace-v${version}',
