@@ -51,6 +51,8 @@
   "dependencies": {
     "@semantic-release/commit-analyzer": "13.0.1",
     "@semantic-release/error": "4.0.0",
+    "fast-glob": "3.3.3",
+    "smol-toml": "1.9.1",
     "yaml": "2.9.1"
   }
 }

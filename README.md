@@ -6,15 +6,17 @@ Workspace-aware monorepo releases for semantic-release.
 
 The plugin now implements workspace discovery and the real semantic-release lifecycle:
 workspace batch tags, read-only release previews, no-change runs, and durable
-retry after a failed run. It discovers pnpm, npm, and Yarn packages, including
-private packages. Per-package versions, dependency coordination, npm publishing,
-and Cargo/crates.io support are not implemented yet.
+retry after a failed run. It discovers pnpm, npm, Yarn, and Cargo workspaces,
+including private packages and non-publishable crates. Per-package versions,
+dependency coordination, and npm/crates.io publication are not implemented yet.
 
 ## Workspace discovery
 
 Discovery runs during `verifyConditions`, including dry runs, before a batch can
 be tagged. It reads files without running package-manager commands or installing
 workspace dependencies.
+
+### JavaScript workspaces
 
 Supported definitions:
 - pnpm: the `packages` array in `pnpm-workspace.yaml`.
@@ -40,16 +42,18 @@ packages:
   - "!**/fixtures/**"
 ```
 
-The internal inventory contains each package's name, canonical absolute directory,
-repository-relative path, private status, and manifest. It is sorted by directory
+The internal inventory contains each package's ecosystem, name, canonical absolute
+directory, repository-relative path, manifest path, private status, and manifest.
+It is sorted by directory
 and deduplicated by canonical path, so overlapping globs do not duplicate packages.
 Nested packages remain separate inventory entries; ownership of individual commit
 paths will be assigned during the version-planning milestone.
 
 Private packages stay in the inventory for later dependency analysis and are not
-publication candidates. Duplicate names are rejected across all discovered
-packages, including private packages, with both locations in the error.
-The repository root is always excluded from the release inventory, even when a
+publication candidates. Duplicate names are rejected within each ecosystem,
+including private packages, with both locations in the error. An npm package and
+a Cargo crate may share a name because their registries have separate namespaces.
+The JavaScript repository root is excluded from the release inventory, even when a
 workspace pattern includes it. Git and package-manager cache directories are
 excluded. Workspace directory symlinks are rejected, including symlinked
 ancestors, to prevent aliases from bypassing exclusions. Manifest symlinks must
@@ -65,9 +69,45 @@ If both definitions exist, their discovered canonical package membership must
 agree. Otherwise discovery fails rather than silently selecting a different
 workspace. When they agree, pnpm is recorded as the definition source.
 
+### Cargo workspaces
+
+A root `Cargo.toml` enables Cargo discovery, with no `package.json` required.
+Cargo and JavaScript definitions can coexist; both contribute to one inventory.
+Discovery supports virtual workspaces, a root package with `[workspace]`, and a
+standalone root crate. Unlike JavaScript, a Cargo root package is a member and
+appears at path `.`.
+
+`workspace.members` selects directories with globs; `workspace.exclude` contains
+literal directory paths and excludes their descendants too. Explicit member
+paths and their descendants take precedence over exclusions, matching Cargo.
+Cargo member globs support `*`, `**`, `?`, and character classes, including hidden
+directories. Brace expansion and extended shell globs are disabled. Patterns must
+stay inside the repository and use forward slashes. A member pattern with no
+matches, a missing/invalid member manifest, a nested workspace root, or a member
+pointing at a different workspace fails discovery. Generated `target`, Git, and
+package-manager cache directories are ignored. The same canonical-path and
+symlink checks apply to both ecosystems.
+
+All workspace members are included, regardless of `default-members`. Local path
+dependencies inside an explicit Cargo workspace also become members, including
+inherited `workspace.dependencies`, dev/build dependencies, and target-specific
+dependencies. Legacy `dev_dependencies` and `build_dependencies` tables are
+recognized, with canonical hyphenated names taking precedence. Exclusions still apply. Path dependencies outside the repository
+are external dependencies and do not become inventory entries.
+
+Crates with `package.publish = false` or `publish = []` stay in the inventory with
+`private: true`. `publish.workspace = true` resolves through
+`workspace.package.publish`. Allowed registry names are preserved for future
+publishing decisions. Duplicate Cargo names are rejected even for private crates.
+The raw TOML manifest is retained without rewriting its package/dependency tables.
+
+Discovery parses manifests directly: it requires no Rust installation, does not
+invoke Cargo, and does not create a lockfile, resolve registry dependencies, or
+modify source files. Cargo version updates and crates.io publishing will need a
+later milestone.
+
 Discovery does not yet affect commit attribution or package versions. The current
-batch lifecycle still analyzes repository-wide commits. Cargo manifests are not
-read by this discovery implementation.
+batch lifecycle still analyzes repository-wide commits.
 
 ## Lifecycle proof
 
@@ -147,7 +187,10 @@ separate Node processes against disposable local bare Git remotes. No GitHub
 repository, npm publication, network credentials, or mocked core is required.
 Fixture tests exercise workspace definitions, exclusions, private packages,
 duplicate names, invalid input, conflicts, and path boundaries. Real-core tests
-also verify discovery through all three managers and rejection before tagging.
+also verify discovery through all three JavaScript managers, Cargo-only and mixed
+repositories, and rejection before tagging. When Cargo is installed, an additional
+fixture compares discovery with real offline `cargo metadata`; no registry access
+is needed.
 Lifecycle tests exercise remote refs, persisted journal state, clean source files,
 no-change runs, dry-run previews, fresh-clone recovery before/after tagging,
 blocked newer commits, and damaged recovery state.
@@ -180,6 +223,16 @@ Node typings track the latest Node 24 release to avoid using newer runtime APIs.
 tsdown currently warns that its TypeScript 7 API integration is experimental;
 the compiler itself is a stable release. Build and declaration output are verified.
 Commit `pnpm-lock.yaml` and use `pnpm install --frozen-lockfile` in CI.
+
+Dependency audit reviewed on 2026-10-23:
+[GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
+affects the transitive `braces` package used by semantic-release and fast-glob;
+no patched version is available. Cargo discovery disables brace expansion, so its
+patterns do not enter the affected expansion routines. The remaining
+semantic-release path accepts repository-controlled configuration. This upstream
+finding is deferred pending a compatible fix; review again before publishing or
+by 2026-11-23, whichever comes first.
+
 
 ## Versioning and publishing
 

@@ -394,6 +394,88 @@ describe('real semantic-release lifecycle', { timeout: 60_000 }, () => {
     },
   );
 
+  test.each(['cargo', 'mixed'])(
+    '%s discovery runs through real semantic-release without invoking Cargo',
+    (kind) => {
+      const f = fixture();
+      if (kind === 'cargo') rmSync(join(f.cwd, 'package.json'));
+      else {
+        writeFileSync(
+          join(f.cwd, 'package.json'),
+          JSON.stringify({ name: 'fixture', workspaces: ['packages/*'] }),
+        );
+        mkdirSync(join(f.cwd, 'packages/shared'), { recursive: true });
+        writeFileSync(
+          join(f.cwd, 'packages/shared/package.json'),
+          '{"name":"shared"}',
+        );
+      }
+      const cargo =
+        '[workspace]\nmembers = ["crates/*"]\nexclude = ["crates/excluded"]\n';
+      writeFileSync(join(f.cwd, 'Cargo.toml'), cargo);
+      for (const [name, policy] of [
+        ['shared', 'true'],
+        ['internal', 'false'],
+      ] as const) {
+        const directory = join(f.cwd, 'crates', name);
+        mkdirSync(directory, { recursive: true });
+        writeFileSync(
+          join(directory, 'Cargo.toml'),
+          `[package]\nname = "${name}"\npublish = ${policy}\n`,
+        );
+      }
+      mkdirSync(join(f.cwd, 'crates/excluded'), { recursive: true });
+      writeFileSync(join(f.cwd, 'crates/excluded/Cargo.toml'), '[broken');
+      f.git(f.cwd, 'add', '.');
+      f.commit('feat: discover Cargo crates');
+      const before = f.refs();
+      const outcome = f.run({ dryRun: true });
+      expect(outcome.ok, outcome.logs).toBe(true);
+      expect(outcome.logs).toContain(
+        kind === 'cargo'
+          ? 'Discovered 2 workspace packages (1 publishable).'
+          : 'Discovered 3 workspace packages (2 publishable).',
+      );
+      expect(f.refs()).toBe(before);
+      expect(f.git(f.cwd, 'status', '--porcelain')).toBe('');
+      expect(readFileSync(join(f.cwd, 'Cargo.toml'), 'utf8')).toBe(cargo);
+      if (kind === 'cargo') {
+        expect(f.run().ok).toBe(true);
+        expect(f.tags()).toEqual(['workspace-v1.0.0']);
+        const completed = f.refs();
+        expect(f.run().result).toBe(false);
+        expect(f.refs()).toBe(completed);
+      }
+    },
+  );
+
+  test('duplicate Cargo crate names abort real semantic-release before tagging', () => {
+    const f = fixture();
+    rmSync(join(f.cwd, 'package.json'));
+    writeFileSync(
+      join(f.cwd, 'Cargo.toml'),
+      '[workspace]\nmembers = ["crates/*"]\n',
+    );
+    for (const [name, policy] of [
+      ['a', 'true'],
+      ['b', 'false'],
+    ] as const) {
+      const directory = join(f.cwd, 'crates', name);
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(
+        join(directory, 'Cargo.toml'),
+        `[package]\nname = "duplicate"\npublish = ${policy}\n`,
+      );
+    }
+    f.git(f.cwd, 'add', '.');
+    f.commit('feat: reject duplicate Cargo crates');
+    const before = f.refs();
+    const outcome = f.run();
+    expect(outcome.ok).toBe(false);
+    expect(outcome.codes).toContain('EWORKSPACEDUPLICATE');
+    expect(f.refs()).toBe(before);
+  });
+
   test('duplicate package names abort real semantic-release before tagging', () => {
     const f = fixture();
     writeFileSync(

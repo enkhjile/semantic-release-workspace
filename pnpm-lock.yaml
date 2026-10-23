@@ -213,6 +213,12 @@ importers:
       "@semantic-release/error":
         specifier: 4.0.0
         version: 4.0.0
+      fast-glob:
+        specifier: 3.3.3
+        version: 3.3.3
+      smol-toml:
+        specifier: 1.9.1
+        version: 1.9.1
       yaml:
         specifier: 2.9.1
         version: 2.9.1
@@ -414,6 +420,27 @@ packages:
       {
         integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==,
       }
+
+  "@nodelib/fs.scandir@2.1.5":
+    resolution:
+      {
+        integrity: sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g==,
+      }
+    engines: { node: ">= 8" }
+
+  "@nodelib/fs.stat@2.0.5":
+    resolution:
+      {
+        integrity: sha512-RkhPPp2zrqDAQA/2jNhnztcPAlv64XdhIp7a7454A5ovI7Bukxgt7MX7udwAu3zg1DcpPU0rz3VV1SeaqvY4+A==,
+      }
+    engines: { node: ">= 8" }
+
+  "@nodelib/fs.walk@1.2.8":
+    resolution:
+      {
+        integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==,
+      }
+    engines: { node: ">= 8" }
 
   "@octokit/auth-token@6.0.0":
     resolution:
@@ -1569,6 +1596,19 @@ packages:
       }
     engines: { node: ">=12.0.0" }
 
+  fast-glob@3.3.3:
+    resolution:
+      {
+        integrity: sha512-7MptL8U0cqcFdzIzwOTHoilX9x5BrNqye7Z/LuC7kCMRio1EMSyqRK3BEAUD7sXRq4iT4AzTVuZdhgQ2TCvYLg==,
+      }
+    engines: { node: ">=8.6.0" }
+
+  fastq@1.20.3:
+    resolution:
+      {
+        integrity: sha512-XKv5nnLs6nLF71NgiKJLIZFLkPyIEuOselLG7ujZnGrRfQK8HpvY+WqKhAJUAdLomwVHErVS4LfxFlPq0/FTAw==,
+      }
+
   fdir@6.5.0:
     resolution:
       {
@@ -1692,6 +1732,13 @@ packages:
       {
         integrity: sha512-PI+sPDvHXNPl5WNOErAK05s3j0lgwUzMN6o8cyQrDaKfT3qd7TmNJKeXX+SknI5I0QhG5fVPAEwSY4tRGDtYoQ==,
       }
+
+  glob-parent@5.1.2:
+    resolution:
+      {
+        integrity: sha512-AOIgSQCepiJYwP3ARnGx+5VnTu2HBYdzbGP45eLw1vr3zB3vZLeyed1sC9hnbcOc9/SrMyM5RPQrkGz4aS9Zow==,
+      }
+    engines: { node: ">= 6" }
 
   graceful-fs@4.2.10:
     resolution:
@@ -1847,12 +1894,26 @@ packages:
         integrity: sha512-zz06S8t0ozoDXMG+ube26zeCTNXcKIPJZJi8hBrF4idCLms4CG9QtK7qBl1boi5ODzFpjswb5JPmHCbMpjaYzg==,
       }
 
+  is-extglob@2.1.1:
+    resolution:
+      {
+        integrity: sha512-SbKbANkN603Vi4jEZv49LeVJMn4yGwsbzZworEoyEiutsN3nJYdbO36zfhGJ6QEDpOZIFkDtnq5JRxmvl3jsoQ==,
+      }
+    engines: { node: ">=0.10.0" }
+
   is-fullwidth-code-point@3.0.0:
     resolution:
       {
         integrity: sha512-zymm5+u+sCsSWyD9qNaejV3DFvhCKclKdizYaJUuHA83RLjb7nSuGnddCHGv0hk+KY7BMAlsWeK4Ueg6EV6XQg==,
       }
     engines: { node: ">=8" }
+
+  is-glob@4.0.3:
+    resolution:
+      {
+        integrity: sha512-xelSayHH36ZgE7ZWhli7pW34hNbNl8Ojv5KVmkJD4hBdD3th8Tfk9vYasLM+mXWOZhFkgZfxhLSnrwRr4elSSg==,
+      }
+    engines: { node: ">=0.10.0" }
 
   is-number@7.0.0:
     resolution:
@@ -2180,6 +2241,13 @@ packages:
       {
         integrity: sha512-abv/qOcuPfk3URPfDzmZU1LKmuw8kT+0nIHvKrKgFrwifol/doWcdA4ZqsWQ8ENrFKkd67Mfpo/LovbIUsbt3w==,
       }
+
+  merge2@1.4.1:
+    resolution:
+      {
+        integrity: sha512-8q7VEgMJW4J8tcfVPy8g09NcQwZdbwFEqhe/WZkoIzjn/3TGDwtOCYtXGxA3O8tPzpczCCDgv+P2P5y00ZJOOg==,
+      }
+    engines: { node: ">= 8" }
 
   micromatch@4.0.8:
     resolution:
@@ -2600,6 +2668,12 @@ packages:
         integrity: sha512-5xZacEEufv3HSTPQuchrvV6soaiACMFnq1H8wkVioctoH3TRha9Sz66lOxRwPK/qZj7HPiSveih9yAyh98gvqA==,
       }
 
+  queue-microtask@1.2.3:
+    resolution:
+      {
+        integrity: sha512-NuaNSa6flKT5JaSYQzJok04JzTL1CA6aGhv5rfLW3PgqA+M2ChpZQnAC8h8i4ZFkBS8X5RqkDBHA7r4hej3K9A==,
+      }
+
   rc@1.2.8:
     resolution:
       {
@@ -2675,6 +2749,13 @@ packages:
         integrity: sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw==,
       }
 
+  reusify@1.1.0:
+    resolution:
+      {
+        integrity: sha512-g6QUff04oZpHs0eG5p83rFLhHeV00ug/Yf9nZM6fLeUrPguBTkTQOdpAWWspMh55TZfVQDPaN3NQJfbVRAxdIw==,
+      }
+    engines: { iojs: ">=1.0.0", node: ">=0.10.0" }
+
   rolldown-plugin-dts@0.28.8:
     resolution:
       {
@@ -2707,6 +2788,12 @@ packages:
       }
     engines: { node: ^20.19.0 || >=22.12.0 }
     hasBin: true
+
+  run-parallel@1.2.0:
+    resolution:
+      {
+        integrity: sha512-5l4VyZR86LZ/lDxZTR6jqL8AFE2S0IFLMP26AbjsLVADxHdhB/c0GUsH+y39UfCi3dzz8OlQuPmnaJOMoDHQBA==,
+      }
 
   safe-buffer@5.1.2:
     resolution:
@@ -2771,6 +2858,13 @@ packages:
         integrity: sha512-kUMbT1oBJCpgrnKoSr0o6wPtvRWT9W9UKvGLwfJYO2WuahZRHOpEyL1ckyMGgMWh0UdpmaoFqKKD29WTomNEGA==,
       }
     engines: { node: ">=8" }
+
+  smol-toml@1.9.1:
+    resolution:
+      {
+        integrity: sha512-j7WyPdf0CJoutMzMoPLF/bVXHtKZIT9Rb4eGeEbWw8X2t5oirjPgpL+OpaENZrILYaXqYwnVH+qgUwVbl+pUJQ==,
+      }
+    engines: { node: ">= 18" }
 
   source-map-js@1.2.2:
     resolution:
@@ -3505,6 +3599,18 @@ snapshots:
       "@jridgewell/resolve-uri": 3.1.2
       "@jridgewell/sourcemap-codec": 1.6.0
 
+  "@nodelib/fs.scandir@2.1.5":
+    dependencies:
+      "@nodelib/fs.stat": 2.0.5
+      run-parallel: 1.2.0
+
+  "@nodelib/fs.stat@2.0.5": {}
+
+  "@nodelib/fs.walk@1.2.8":
+    dependencies:
+      "@nodelib/fs.scandir": 2.1.5
+      fastq: 1.20.3
+
   "@octokit/auth-token@6.0.0": {}
 
   "@octokit/core@7.0.8":
@@ -4090,6 +4196,18 @@ snapshots:
 
   expect-type@1.4.0: {}
 
+  fast-glob@3.3.3:
+    dependencies:
+      "@nodelib/fs.stat": 2.0.5
+      "@nodelib/fs.walk": 1.2.8
+      glob-parent: 5.1.2
+      merge2: 1.4.1
+      micromatch: 4.0.8
+
+  fastq@1.20.3:
+    dependencies:
+      reusify: 1.1.0
+
   fdir@6.5.0(picomatch@4.0.7):
     optionalDependencies:
       picomatch: 4.0.7
@@ -4153,6 +4271,10 @@ snapshots:
       stream-combiner2: 1.1.1
       through2: 2.0.5
       traverse: 0.6.8
+
+  glob-parent@5.1.2:
+    dependencies:
+      is-glob: 4.0.3
 
   graceful-fs@4.2.10: {}
 
@@ -4233,7 +4355,13 @@ snapshots:
 
   is-arrayish@0.2.1: {}
 
+  is-extglob@2.1.1: {}
+
   is-fullwidth-code-point@3.0.0: {}
+
+  is-glob@4.0.3:
+    dependencies:
+      is-extglob: 2.1.1
 
   is-number@7.0.0: {}
 
@@ -4384,6 +4512,8 @@ snapshots:
   meow@13.2.0: {}
 
   merge-stream@2.0.0: {}
+
+  merge2@1.4.1: {}
 
   micromatch@4.0.8:
     dependencies:
@@ -4547,6 +4677,8 @@ snapshots:
 
   quansync@1.0.0: {}
 
+  queue-microtask@1.2.3: {}
+
   rc@1.2.8:
     dependencies:
       deep-extend: 0.6.0
@@ -4604,6 +4736,8 @@ snapshots:
 
   resolve-pkg-maps@1.0.0: {}
 
+  reusify@1.1.0: {}
+
   rolldown-plugin-dts@0.28.8(rolldown@1.2.15)(typescript@7.0.2):
     dependencies:
       dts-resolver: 3.0.0
@@ -4638,6 +4772,10 @@ snapshots:
       "@rolldown/binding-openharmony-arm64": 1.2.15
       "@rolldown/binding-win32-arm64-msvc": 1.2.15
       "@rolldown/binding-win32-x64-msvc": 1.2.15
+
+  run-parallel@1.2.0:
+    dependencies:
+      queue-microtask: 1.2.3
 
   safe-buffer@5.1.2: {}
 
@@ -4697,6 +4835,8 @@ snapshots:
   skin-tone@2.0.0:
     dependencies:
       unicode-emoji-modifier-base: 1.0.0
+
+  smol-toml@1.9.1: {}
 
   source-map-js@1.2.2: {}
 
