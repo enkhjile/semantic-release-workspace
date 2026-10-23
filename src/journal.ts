@@ -2,17 +2,20 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import SemanticReleaseError from '@semantic-release/error';
 import type { VerifyConditionsContext } from 'semantic-release';
+import type { PlanningState } from './plan-types.js';
+import { oid, validPlanning } from './plan-validation.js';
 
 const execute = promisify(execFile);
 const journalRef = 'refs/notes/semantic-release-workspace';
 
 export interface Journal {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   branch: string;
   status: 'pending' | 'complete';
   head: string;
   baseHead: string | null;
   batchTag: string;
+  planning?: PlanningState;
 }
 
 export interface Snapshot {
@@ -21,18 +24,40 @@ export interface Snapshot {
   journal: Journal | undefined;
 }
 
+export interface GitContext {
+  cwd?: string | undefined;
+  env?: NodeJS.ProcessEnv | undefined;
+}
+
 export async function git(
-  context: VerifyConditionsContext,
+  context: GitContext,
   ...args: string[]
 ): Promise<string> {
+  return (await gitOutput(context, ...args)).trim();
+}
+
+export async function gitOutput(
+  context: GitContext,
+  ...args: string[]
+): Promise<string> {
+  return executeGit(context, args);
+}
+
+async function executeGit(
+  context: GitContext,
+  args: string[],
+  input?: string,
+): Promise<string> {
   try {
-    const { stdout } = await execute('git', args, {
+    const pending = execute('git', args, {
       cwd: context.cwd,
       env: context.env,
       encoding: 'utf8',
       maxBuffer: 16 * 1024 * 1024,
     });
-    return stdout.trim();
+    if (input !== undefined) pending.child.stdin?.end(input);
+    const { stdout } = await pending;
+    return stdout;
   } catch {
     // Git errors may include an authenticated remote URL; do not expose it.
     throw new SemanticReleaseError(
@@ -46,14 +71,14 @@ export async function git(
 function parseJournal(raw: string): Journal {
   try {
     const value: unknown = JSON.parse(raw);
-    const oid = (input: unknown): input is string =>
-      typeof input === 'string' &&
-      /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(input);
     if (
       typeof value === 'object' &&
       value !== null &&
       'schemaVersion' in value &&
-      value.schemaVersion === 1 &&
+      (value.schemaVersion === 1 ||
+        (value.schemaVersion === 2 &&
+          'planning' in value &&
+          validPlanning(value.planning))) &&
       'branch' in value &&
       typeof value.branch === 'string' &&
       'status' in value &&
@@ -65,8 +90,54 @@ function parseJournal(raw: string): Journal {
       'batchTag' in value &&
       typeof value.batchTag === 'string' &&
       /^workspace-v\d+\.\d+\.\d+$/.test(value.batchTag)
-    )
-      return value as Journal;
+    ) {
+      const result = value as Journal;
+      if (
+        result.schemaVersion === 2 &&
+        (result.planning?.plan.head !== result.head ||
+          result.planning?.plan.baseHead !== result.baseHead)
+      )
+        throw new Error('Mismatched plan');
+      if (result.status === 'complete' && result.planning) {
+        for (const pkg of result.planning.plan.packages) {
+          const completed = result.planning.versions.find(
+            (entry) => entry.id === pkg.id,
+          );
+          const expected = pkg.nextVersion ?? pkg.currentVersion;
+          if (
+            (completed && completed.version !== expected) ||
+            (pkg.nextVersion && (!completed || completed.head !== result.head))
+          )
+            throw new Error('Mismatched completed package version');
+        }
+      }
+      if (result.schemaVersion === 1 && result.planning !== undefined)
+        throw new Error('Unexpected planning payload');
+      if (result.status === 'complete' && result.planning) {
+        const updates = new Map(
+          result.planning.plan.packages.flatMap((pkg) =>
+            pkg.dependencyUpdates.map(
+              (entry) =>
+                [
+                  JSON.stringify([entry.manifestPath, entry.field]),
+                  entry,
+                ] as const,
+            ),
+          ),
+        );
+        if (
+          updates.size !== result.planning.dependencyRanges.length ||
+          result.planning.dependencyRanges.some(
+            (entry) =>
+              JSON.stringify(
+                updates.get(JSON.stringify([entry.manifestPath, entry.field])),
+              ) !== JSON.stringify(entry),
+          )
+        )
+          throw new Error('Mismatched dependency projection');
+      }
+      return result;
+    }
   } catch {
     // Invalid state is an error, never a reason to release the entire history.
   }
@@ -170,13 +241,23 @@ export function baseline(current: Snapshot): string | null {
 
 export async function commitsSinceCompletion(context: VerifyConditionsContext) {
   const current = await snapshot(context);
-  const baseHead = baseline(current);
+  return {
+    current,
+    commits: await readCommits(context, current.head, baseline(current)),
+  };
+}
+
+export async function readCommits(
+  context: GitContext,
+  head: string,
+  baseHead: string | null = null,
+) {
   const output = await git(
     context,
     'log',
     '-z',
     '--format=%H%x00%B',
-    baseHead ? `${baseHead}..${current.head}` : current.head,
+    baseHead ? `${baseHead}..${head}` : head,
     '--',
   );
   const fields = output.split('\0');
@@ -192,7 +273,7 @@ export async function commitsSinceCompletion(context: VerifyConditionsContext) {
       commits.push({ hash, message });
     }
   }
-  return { current, commits };
+  return commits;
 }
 
 export async function writeJournal(
@@ -200,24 +281,47 @@ export async function writeJournal(
   current: Snapshot,
   status: Journal['status'],
   batchTag: string,
+  planning?: PlanningState,
 ): Promise<void> {
   const journal: Journal = {
-    schemaVersion: 1,
+    schemaVersion: planning ? 2 : 1,
     branch: context.branch.name,
     status,
     head: current.head,
     baseHead: baseline(current),
     batchTag,
   };
-  await git(
+  if (planning) {
+    const versions = new Map(
+      planning.versions.map((entry) => [entry.id, entry]),
+    );
+    const ranges = new Map(
+      planning.dependencyRanges.map((entry) => [
+        JSON.stringify([entry.manifestPath, entry.field]),
+        entry,
+      ]),
+    );
+    if (status === 'complete')
+      for (const pkg of planning.plan.packages) {
+        if (pkg.nextVersion)
+          versions.set(pkg.id, {
+            id: pkg.id,
+            version: pkg.nextVersion,
+            head: current.head,
+          });
+        for (const entry of pkg.dependencyUpdates)
+          ranges.set(JSON.stringify([entry.manifestPath, entry.field]), entry);
+      }
+    journal.planning = {
+      plan: planning.plan,
+      versions: [...versions.values()].sort((a, b) => a.id.localeCompare(b.id)),
+      dependencyRanges: [...ranges.values()],
+    };
+  }
+  await executeGit(
     context,
-    'notes',
-    `--ref=${journalRef}`,
-    'add',
-    '-f',
-    '-m',
+    ['notes', `--ref=${journalRef}`, 'add', '-f', '-F', '-', current.anchor],
     JSON.stringify(journal),
-    current.anchor,
   );
   // Normal push rejects a conflicting journal update. CI must serialize releases.
   await git(

@@ -7,8 +7,10 @@ Workspace-aware monorepo releases for semantic-release.
 The plugin now implements workspace discovery and the real semantic-release lifecycle:
 workspace batch tags, read-only release previews, no-change runs, and durable
 retry after a failed run. It discovers pnpm, npm, Yarn, and Cargo workspaces,
-including private packages and non-publishable crates. Per-package versions,
-dependency coordination, and npm/crates.io publication are not implemented yet.
+including private packages and non-publishable crates. It attributes commits to
+packages and produces independent version plans with coordinated dependency
+updates. Manifest changes, package tags, and npm/crates.io publication are not
+implemented yet.
 
 ## Workspace discovery
 
@@ -46,8 +48,8 @@ The internal inventory contains each package's ecosystem, name, canonical absolu
 directory, repository-relative path, manifest path, private status, and manifest.
 It is sorted by directory
 and deduplicated by canonical path, so overlapping globs do not duplicate packages.
-Nested packages remain separate inventory entries; ownership of individual commit
-paths will be assigned during the version-planning milestone.
+Nested packages remain separate inventory entries; the deepest discovered package
+directory owns a changed file. Ecosystems at the same directory both own it.
 
 Private packages stay in the inventory for later dependency analysis and are not
 publication candidates. Duplicate names are rejected within each ecosystem,
@@ -106,10 +108,78 @@ invoke Cargo, and does not create a lockfile, resolve registry dependencies, or
 modify source files. Cargo version updates and crates.io publishing will need a
 later milestone.
 
-Discovery does not yet affect commit attribution or package versions. The current
-batch lifecycle still analyzes repository-wide commits.
+## Package attribution and version planning
 
-## Lifecycle proof
+For a nonempty inventory, commits are attributed by changed files, regardless of
+commit scope. A rename includes both its old and new paths; deletions and initial
+commits are included. Merge changes are read against the first parent. A nested
+package owns its files instead of its parent. Empty commits and unowned root
+files do not trigger package releases. `[skip release]` and `[release skip]`
+exclude the whole commit.
+
+Opt shared files into every package with repository-relative `sharedFiles` globs:
+
+```js
+export default {
+  branches: ['main'],
+  tagFormat: 'workspace-v${version}',
+  plugins: [
+    [
+      'semantic-release-workspace',
+      {
+        sharedFiles: ['shared/**', 'build.config.js'],
+      },
+    ],
+  ],
+};
+```
+
+Conventional Commit analyzer options, such as `preset` and `releaseRules`, can be
+supplied on the same plugin configuration. Each package receives its own strongest
+major/minor/patch signal. Private packages participate but remain non-publishable.
+
+Package baselines use completed journal versions or a newer reachable stable
+`npm/<name>@<version>` or `cargo/<name>@<version>` tag. Tagged history is excluded
+from that package's commits. Each package keeps commits since its own last
+completed version; another package's batch does not consume its unreleased history.
+With no recorded baseline, a declared stable manifest
+version is incremented; Cargo `version.workspace = true` is resolved. A package
+with no declared version starts at `1.0.0` when it first needs a release. Invalid
+or prerelease baselines fail instead of being coerced. Inherited Cargo package
+versions are planned independently; a later manifest writer must materialize
+member versions when they differ.
+
+### Dependency coordination
+
+npm and Cargo use separate dependency graphs. The planner iterates until no
+release type increases, then emits dependency-first groups. Cycles form one group;
+a package is incremented once from its original baseline, even inside a cycle.
+- Out-of-range runtime, optional, and Cargo build dependencies force at least a patch.
+- Out-of-range npm peer dependencies require a major because the old support range changes.
+- Dev-only dependencies receive proposed updates but do not force releases.
+- npm `workspace:` aliases/shorthands and local `file:`/`link:` references track
+  local version changes; optional declarations override duplicate normal dependencies.
+- Ordinary npm semver requirements select a matching local current version.
+  Registry aliases, git/URL references, and incompatible registry requirements are external.
+- Cargo path dependencies include renamed, inherited, target-specific, and legacy
+  table forms. Registry-only or excluded/outside-workspace crates are external.
+- Cargo bare `1.2.3` means caret compatibility; npm bare `1.2.3` is exact.
+  Cargo comma-separated comparators are intersected. Missing Cargo path version
+  requirements receive a proposed version for future publication.
+
+The plan is emitted as a JSON block in release notes (including dry runs) and as
+`plan` on this plugin's publish result. It contains every package's attributed
+commits, current/next versions, release type, private flag, dependency updates
+with manifest/field locations, and ordered groups. Batch attempt versions remain
+separate from package versions.
+
+Completing a batch records planned versions and projected dependency ranges in
+the journal. Later plans use those ranges while their original manifest values
+remain unchanged; an edited dependency requirement takes precedence. This keeps
+successive planning batches consistent without writing manifests. These records
+are planning history, not evidence of registry publication.
+
+## Batch lifecycle
 
 Load the package directly through `plugins` in a consumer repository:
 
@@ -132,10 +202,10 @@ arrive in a later milestone. This repository's own `release.config.mjs` continue
 using standard plugins to version and publish the plugin package itself.
 
 The exported hooks are `verifyConditions`, `analyzeCommits`, `verifyRelease`,
-`generateNotes`, `prepare`, `publish`, `success`, and `fail`. The proof reads
-repository-wide commits using the standard Conventional Commit analyzer. It
-honors `[skip release]` and `[release skip]`; documentation/chore-only changes do
-not trigger a batch. File ownership is not yet used for commit attribution.
+`generateNotes`, `prepare`, `publish`, `success`, and `fail`. Package plans use
+the standard Conventional Commit analyzer. At least one planned package release
+triggers a batch; documentation/chore-only changes do not trigger one. An empty
+inventory retains the original repository-wide lifecycle proof behavior.
 
 ### Batch tags and completion
 
@@ -147,9 +217,11 @@ package versions.
 Completion is recorded separately in `refs/notes/semantic-release-workspace`.
 The journal is a versioned JSON note attached to the repository's single root
 commit; it records the release branch, source commit, previous completed source
-commit, attempted batch tag, and `pending` or `complete` status.
+commit, attempted batch tag, and `pending` or `complete` status. Schema 2 adds
+the exact package plan, completed package versions, and projected dependency
+ranges. Schema 1 journals remain readable and migrate when package planning begins.
 - `prepare` pushes a pending journal **before** core creates its batch tag.
-- `publish` returns a lifecycle proof result and publishes no packages.
+- `publish` returns the package plan and publishes no packages.
 - `success` marks the batch complete after all publish hooks have succeeded.
 - `fail` preserves pending state. A failure before journal creation leaves no
   pending state.
@@ -164,7 +236,10 @@ The plugin fetches its journal from the configured release remote. A pending
 batch blocks newer source commits until the original source commit is recovered.
 A retry after a pushed tag receives another batch tag; a retry before tagging can
 use the original candidate tag. The logical work and completion baseline remain
-the same. Successful work is not released again on the next invocation.
+the same. Package versions and the stored plan remain identical across retries.
+If source, configuration, or baseline changes produce a different pending plan,
+the run fails until the original conditions are restored. Successful work is not
+released again on the next invocation.
 
 A `--dry-run` previews notes and the next batch version without preparing,
 publishing, pushing a journal, or creating tags. Git metadata may be fetched,
@@ -193,7 +268,10 @@ fixture compares discovery with real offline `cargo metadata`; no registry acces
 is needed.
 Lifecycle tests exercise remote refs, persisted journal state, clean source files,
 no-change runs, dry-run previews, fresh-clone recovery before/after tagging,
-blocked newer commits, and damaged recovery state.
+blocked newer commits, and damaged recovery state. Planning tests exercise
+independent/tagged versions, nested ownership, rename attribution, shared files,
+npm/Cargo ranges, dependency chains/cycles, peers and dev dependencies, private
+packages, schema migration, projected ranges, and exact fresh-clone plan recovery.
 
 ## Development
 

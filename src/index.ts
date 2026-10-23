@@ -18,6 +18,7 @@ import {
   snapshot,
   writeJournal,
 } from './journal.js';
+import { createVersionPlan, planNotes } from './planning.js';
 
 type PluginConfig = Record<string, unknown>;
 
@@ -62,11 +63,20 @@ export async function verifyConditions(
 }
 
 export async function analyzeCommits(
-  _config: PluginConfig,
+  config: PluginConfig,
   context: AnalyzeCommitsContext,
 ): Promise<'patch' | undefined> {
+  const planning = await createVersionPlan(config, context);
+  if (planning.plan.packages.length)
+    return planning.current.journal?.status === 'pending' ||
+      planning.plan.packages.some((pkg) => pkg.type)
+      ? 'patch'
+      : undefined;
   const { current, commits } = await commitsSinceCompletion(context);
-  const release = await analyzeConventionalCommits({}, { ...context, commits });
+  const release = await analyzeConventionalCommits(config, {
+    ...context,
+    commits,
+  });
   return current.journal?.status === 'pending' || release ? 'patch' : undefined;
 }
 
@@ -84,9 +94,11 @@ export async function verifyRelease(
 }
 
 export async function generateNotes(
-  _config: PluginConfig,
+  config: PluginConfig,
   context: GenerateNotesContext,
 ): Promise<string> {
+  const planning = await createVersionPlan(config, context);
+  if (planning.plan.packages.length) return planNotes(planning.plan);
   const { current, commits } = await commitsSinceCompletion(context);
   return [
     '# Workspace batch lifecycle proof',
@@ -100,42 +112,47 @@ export async function generateNotes(
         `- ${message.split('\n')[0]} (${hash.slice(0, 7)})`,
     ),
     '',
-    'Per-package versioning and publication are not implemented in this milestone.',
+    'No workspace packages were discovered; this batch contains repository-wide lifecycle proof work.',
   ].join('\n');
 }
 
 export async function prepare(
-  _config: PluginConfig,
+  config: PluginConfig,
   context: PrepareContext,
 ): Promise<void> {
+  const planning = await createVersionPlan(config, context);
   await writeJournal(
     context,
-    await snapshot(context),
+    planning.current,
     'pending',
     context.nextRelease.gitTag,
+    planning.plan.packages.length || planning.current.journal?.planning
+      ? planning
+      : undefined,
   );
 }
 
-export async function publish(
-  _config: PluginConfig,
-  context: PublishContext,
-): Promise<{ name: string }> {
-  await snapshot(context);
+export async function publish(config: PluginConfig, context: PublishContext) {
+  const { plan } = await createVersionPlan(config, context);
   context.logger.log(
-    'Workspace lifecycle proof completed; no packages were published.',
+    'Workspace planning completed; no packages were published.',
   );
-  return { name: 'Workspace batch lifecycle proof' };
+  return { name: 'Workspace version plan', plan };
 }
 
 export async function success(
-  _config: PluginConfig,
+  config: PluginConfig,
   context: SuccessContext,
 ): Promise<void> {
+  const planning = await createVersionPlan(config, context);
   await writeJournal(
     context,
-    await snapshot(context),
+    planning.current,
     'complete',
     context.nextRelease.gitTag,
+    planning.plan.packages.length || planning.current.journal?.planning
+      ? planning
+      : undefined,
   );
 }
 

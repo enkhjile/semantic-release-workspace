@@ -42,6 +42,7 @@
     "@semantic-release/npm": "13.2.0",
     "@semantic-release/release-notes-generator": "14.1.1",
     "@types/node": "24.19.2",
+    "@types/semver": "7.8.0",
     "semantic-release": "25.0.9",
     "tsdown": "0.23.1",
     "typescript": "7.0.2",
@@ -52,6 +53,7 @@
     "@semantic-release/commit-analyzer": "13.0.1",
     "@semantic-release/error": "4.0.0",
     "fast-glob": "3.3.3",
+    "semver": "7.8.5",
     "smol-toml": "1.9.1",
     "yaml": "2.9.1"
   }

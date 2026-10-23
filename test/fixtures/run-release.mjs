@@ -30,7 +30,9 @@ try {
       ci: false,
       dryRun: settings.dryRun ?? false,
       plugins:
-        settings.failure === 'prepare' ? [failure, plugin] : [plugin, failure],
+        settings.failure === 'prepare'
+          ? [failure, [plugin, settings.pluginConfig ?? {}]]
+          : [[plugin, settings.pluginConfig ?? {}], failure],
     },
     { cwd, env: { ...process.env }, stdout: output, stderr: output },
   );
