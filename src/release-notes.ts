@@ -100,15 +100,20 @@ export async function notesForRelease(
           ),
         ].join('\n')
       : '';
+    let channel: string | null = null;
+    if (!pkg.private) {
+      if (pkg.ecosystem === 'npm') {
+        channel =
+          destinations.find((entry) => entry.id === pkg.id)?.destination.tag ??
+          npmChannel(context.branch.channel);
+      } else {
+        channel = context.branch.channel || null;
+      }
+    }
     result.packages.push({
       id: pkg.id,
       version: pkg.nextVersion,
-      channel: pkg.private
-        ? null
-        : pkg.ecosystem === 'npm'
-          ? (destinations.find((entry) => entry.id === pkg.id)?.destination
-              .tag ?? npmChannel(context.branch.channel))
-          : context.branch.channel || null,
+      channel,
       notes:
         [body.trim(), dependencies].filter(Boolean).join('\n\n') ||
         'Maintenance release.',
