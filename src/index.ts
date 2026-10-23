@@ -11,6 +11,7 @@ import type {
   VerifyConditionsContext,
   VerifyReleaseContext,
 } from 'semantic-release';
+import { discoverWorkspaces } from './discovery.js';
 import {
   commitsSinceCompletion,
   git,
@@ -51,6 +52,12 @@ export async function verifyConditions(
       'EWORKSPACEDIRTY',
     );
   }
+  const inventory = await discoverWorkspaces(root);
+  context.logger.log(
+    'Discovered %d workspace packages (%d publishable).',
+    inventory.packages.length,
+    inventory.packages.filter((pkg) => !pkg.private).length,
+  );
   await snapshot(context);
 }
 
@@ -93,7 +100,7 @@ export async function generateNotes(
         `- ${message.split('\n')[0]} (${hash.slice(0, 7)})`,
     ),
     '',
-    'Package discovery and publication are not implemented in this milestone.',
+    'Per-package versioning and publication are not implemented in this milestone.',
   ].join('\n');
 }
 

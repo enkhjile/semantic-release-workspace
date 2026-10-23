@@ -4,10 +4,70 @@ Workspace-aware monorepo releases for semantic-release.
 
 ## Status
 
-Milestone 1 implements and tests the real semantic-release plugin lifecycle:
+The plugin now implements workspace discovery and the real semantic-release lifecycle:
 workspace batch tags, read-only release previews, no-change runs, and durable
-retry after a failed run. It does **not** discover workspaces, assign per-package
-versions, coordinate dependencies, or publish npm packages yet.
+retry after a failed run. It discovers pnpm, npm, and Yarn packages, including
+private packages. Per-package versions, dependency coordination, npm publishing,
+and Cargo/crates.io support are not implemented yet.
+
+## Workspace discovery
+
+Discovery runs during `verifyConditions`, including dry runs, before a batch can
+be tagged. It reads files without running package-manager commands or installing
+workspace dependencies.
+
+Supported definitions:
+- pnpm: the `packages` array in `pnpm-workspace.yaml`.
+- npm and modern Yarn: the `workspaces` array in the root `package.json`.
+- Yarn classic: `workspaces.packages`; `nohoist` is not a discovery setting.
+
+The root `packageManager` field selects npm or Yarn semantics. Without it, a
+Yarn workspace object, `yarn.lock`, or `.yarnrc.yml` identifies Yarn; otherwise
+`package.json` declarations use npm semantics. Modern Yarn recursively reads
+workspace declarations in selected child packages. Yarn 1 uses root declarations.
+
+Patterns are relative POSIX directory globs, including braces, `*`, and `**`.
+Prefix an exclusion with `!`. pnpm and Yarn exclusions are final; npm honors
+later positive patterns that cancel earlier matching exclusions.
+Leading `./`, repeated slashes, and trailing slashes are normalized. Absolute
+paths, backslashes, and parent-directory (`..`) segments are rejected.
+
+For example:
+
+```yaml
+packages:
+  - "packages/**"
+  - "!**/fixtures/**"
+```
+
+The internal inventory contains each package's name, canonical absolute directory,
+repository-relative path, private status, and manifest. It is sorted by directory
+and deduplicated by canonical path, so overlapping globs do not duplicate packages.
+Nested packages remain separate inventory entries; ownership of individual commit
+paths will be assigned during the version-planning milestone.
+
+Private packages stay in the inventory for later dependency analysis and are not
+publication candidates. Duplicate names are rejected across all discovered
+packages, including private packages, with both locations in the error.
+The repository root is always excluded from the release inventory, even when a
+workspace pattern includes it. Git and package-manager cache directories are
+excluded. Workspace directory symlinks are rejected, including symlinked
+ancestors, to prevent aliases from bypassing exclusions. Manifest symlinks must
+remain inside the repository.
+
+Selected directories without `package.json` are ignored; malformed package JSON,
+missing/empty package names, and non-boolean `private` fields are rejected. A
+version is not required at this discovery stage. With no workspace definition,
+the inventory is empty. An empty/comment-only pnpm file or a mapping without `packages` also yields
+an empty inventory because the root is excluded.
+
+If both definitions exist, their discovered canonical package membership must
+agree. Otherwise discovery fails rather than silently selecting a different
+workspace. When they agree, pnpm is recorded as the definition source.
+
+Discovery does not yet affect commit attribution or package versions. The current
+batch lifecycle still analyzes repository-wide commits. Cargo manifests are not
+read by this discovery implementation.
 
 ## Lifecycle proof
 
@@ -35,7 +95,7 @@ The exported hooks are `verifyConditions`, `analyzeCommits`, `verifyRelease`,
 `generateNotes`, `prepare`, `publish`, `success`, and `fail`. The proof reads
 repository-wide commits using the standard Conventional Commit analyzer. It
 honors `[skip release]` and `[release skip]`; documentation/chore-only changes do
-not trigger a batch. Until discovery is implemented, file ownership is not used.
+not trigger a batch. File ownership is not yet used for commit attribution.
 
 ### Batch tags and completion
 
@@ -85,7 +145,10 @@ the batch is already complete. Do not use reporting failure to republish work.
 `pnpm test` builds the package and runs real semantic-release 25 invocations in
 separate Node processes against disposable local bare Git remotes. No GitHub
 repository, npm publication, network credentials, or mocked core is required.
-Tests exercise remote refs, persisted journal state, clean source files,
+Fixture tests exercise workspace definitions, exclusions, private packages,
+duplicate names, invalid input, conflicts, and path boundaries. Real-core tests
+also verify discovery through all three managers and rejection before tagging.
+Lifecycle tests exercise remote refs, persisted journal state, clean source files,
 no-change runs, dry-run previews, fresh-clone recovery before/after tagging,
 blocked newer commits, and damaged recovery state.
 

@@ -1,5 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -127,7 +133,8 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 
-describe('real semantic-release lifecycle', () => {
+// Each test may launch several real release processes and Git fetch/push cycles.
+describe('real semantic-release lifecycle', { timeout: 60_000 }, () => {
   test('loads via plugins and pushes a completed batch without changing source files', () => {
     const f = fixture();
     const head = f.commit('feat: add a workspace feature');
@@ -343,6 +350,69 @@ describe('real semantic-release lifecycle', () => {
     const outcome = f.run();
     expect(outcome.ok).toBe(false);
     expect(outcome.codes).toContain('EWORKSPACEDIRTY');
+    expect(f.refs()).toBe(before);
+  });
+
+  test.each(['npm', 'pnpm', 'yarn'])(
+    'discovers %s workspaces through the real plugin lifecycle',
+    (manager) => {
+      const f = fixture();
+      const definition =
+        manager === 'yarn' ? { packages: ['packages/*'] } : ['packages/*'];
+      const rootManifest = {
+        name: 'fixture',
+        private: true,
+        ...(manager === 'pnpm' ? {} : { workspaces: definition }),
+      };
+      writeFileSync(join(f.cwd, 'package.json'), JSON.stringify(rootManifest));
+      if (manager === 'pnpm')
+        writeFileSync(
+          join(f.cwd, 'pnpm-workspace.yaml'),
+          'packages: ["packages/*", "!packages/excluded"]',
+        );
+      for (const [name, isPrivate] of [
+        ['public', false],
+        ['private', true],
+      ] as const) {
+        const directory = join(f.cwd, 'packages', name);
+        mkdirSync(directory, { recursive: true });
+        writeFileSync(
+          join(directory, 'package.json'),
+          JSON.stringify({ name, private: isPrivate }),
+        );
+      }
+      f.git(f.cwd, 'add', '.');
+      f.commit('feat: discover workspace packages');
+      const before = f.refs();
+      const result = f.run({ dryRun: true });
+      expect(result.ok, result.logs).toBe(true);
+      expect(result.logs).toContain(
+        'Discovered 2 workspace packages (1 publishable).',
+      );
+      expect(f.refs()).toBe(before);
+      expect(f.git(f.cwd, 'status', '--porcelain')).toBe('');
+    },
+  );
+
+  test('duplicate package names abort real semantic-release before tagging', () => {
+    const f = fixture();
+    writeFileSync(
+      join(f.cwd, 'package.json'),
+      JSON.stringify({ name: 'fixture', workspaces: ['packages/*'] }),
+    );
+    for (const directory of ['a', 'b']) {
+      mkdirSync(join(f.cwd, 'packages', directory), { recursive: true });
+      writeFileSync(
+        join(f.cwd, 'packages', directory, 'package.json'),
+        '{"name":"duplicate"}',
+      );
+    }
+    f.git(f.cwd, 'add', '.');
+    f.commit('feat: reject invalid inventory');
+    const before = f.refs();
+    const outcome = f.run();
+    expect(outcome.ok).toBe(false);
+    expect(outcome.codes).toContain('EWORKSPACEDUPLICATE');
     expect(f.refs()).toBe(before);
   });
 
