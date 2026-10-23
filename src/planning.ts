@@ -241,6 +241,10 @@ export async function createVersionPlan(
     );
   return {
     current,
+    ...(current.journal?.status === 'pending' &&
+    current.journal.planning?.releaseNotes
+      ? { releaseNotes: current.journal.planning.releaseNotes }
+      : {}),
     plan,
     versions: [...versions.values()],
     dependencyRanges: coordinated.dependencyRanges,

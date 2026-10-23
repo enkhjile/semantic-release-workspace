@@ -54,3 +54,10 @@ declare module 'libnpmpublish' {
   };
   export default value;
 }
+
+declare module '@semantic-release/release-notes-generator' {
+  export function generateNotes(
+    config: Record<string, unknown>,
+    context: Record<string, unknown>,
+  ): Promise<string>;
+}

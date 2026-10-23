@@ -17,6 +17,7 @@ import {
   refFor,
   releaseError,
 } from './release-io.js';
+import { notesForPromotion } from './release-notes.js';
 import { record } from './workspace-files.js';
 
 interface Promotion {
@@ -85,19 +86,7 @@ export async function planPromotion(
     await applyPromotion(config, context, promotion, true);
     if (!context.options.dryRun) await save(context, promotion);
   }
-  return [
-    `# Workspace channel promotion`,
-    '',
-    `Promote ${source.batchTag} to ${promotion.channel}; retain published package bytes and versions.`,
-    '',
-    ...(source.planning?.versions ?? [])
-      .filter((version) =>
-        source.planning?.plan.packages.some(
-          (pkg) => pkg.id === version.id && !pkg.private,
-        ),
-      )
-      .map((version) => `- ${version.id}@${version.version}`),
-  ].join('\n');
+  return notesForPromotion(context, source, (await snapshot(context)).history);
 }
 async function applyPromotion(
   config: Record<string, unknown>,

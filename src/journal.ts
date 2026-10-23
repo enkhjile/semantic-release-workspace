@@ -413,6 +413,7 @@ export async function writeJournal(
           ranges.set(JSON.stringify([entry.manifestPath, entry.field]), entry);
       }
     journal.planning = {
+      ...(planning.releaseNotes ? { releaseNotes: planning.releaseNotes } : {}),
       plan: planning.plan,
       versions: [...versions.values()].sort((a, b) => a.id.localeCompare(b.id)),
       dependencyRanges: [...ranges.values()],

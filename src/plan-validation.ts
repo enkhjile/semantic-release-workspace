@@ -126,5 +126,56 @@ export function validPlanning(value: unknown): value is PlanningState {
     })
   )
     return false;
+  const planned = plan.packages;
+  if (value.releaseNotes !== undefined) {
+    const notes = value.releaseNotes;
+    if (
+      !record(notes) ||
+      typeof notes.changelog !== 'boolean' ||
+      typeof notes.date !== 'string' ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(notes.date) ||
+      !Array.isArray(notes.packages) ||
+      !Array.isArray(notes.changelogs) ||
+      notes.packages.length !== released.size ||
+      new Set(
+        notes.packages.map((entry: unknown) =>
+          record(entry) ? entry.id : null,
+        ),
+      ).size !== released.size ||
+      !notes.packages.every(
+        (entry: unknown) =>
+          record(entry) &&
+          typeof entry.id === 'string' &&
+          released.has(entry.id) &&
+          entry.version ===
+            planned.find((pkg: Record<string, unknown>) => pkg.id === entry.id)
+              ?.nextVersion &&
+          (entry.channel === null || typeof entry.channel === 'string') &&
+          typeof entry.notes === 'string',
+      ) ||
+      (!notes.changelog && notes.changelogs.length > 0) ||
+      new Set(
+        notes.changelogs.map((entry: unknown) =>
+          record(entry) ? entry.path : null,
+        ),
+      ).size !== notes.changelogs.length ||
+      !notes.changelogs.every(
+        (entry: unknown) =>
+          record(entry) &&
+          path(entry.path) &&
+          planned.some(
+            (pkg: Record<string, unknown>) =>
+              pkg.nextVersion &&
+              entry.path ===
+                (pkg.path === '.'
+                  ? 'CHANGELOG.md'
+                  : `${pkg.path}/CHANGELOG.md`),
+          ) &&
+          (entry.before === null || typeof entry.before === 'string') &&
+          typeof entry.after === 'string',
+      )
+    )
+      return false;
+  }
   return value.dependencyRanges.every(update);
 }

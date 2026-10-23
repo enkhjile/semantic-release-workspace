@@ -33,6 +33,7 @@ import {
   releaseScope,
   retainArtifact,
 } from './release-io.js';
+import { notesForRelease } from './release-notes.js';
 
 type Planning = PlanningState & {
   current: Awaited<ReturnType<typeof snapshot>>;
@@ -228,6 +229,12 @@ export async function preparePublication(
   batchTag: string,
 ): Promise<void> {
   const entries = await preflight(config, context, planning);
+  planning.releaseNotes = await notesForRelease(
+    config,
+    context,
+    planning,
+    entries,
+  );
   const changes = await manifestChanges(
     context.cwd ?? process.cwd(),
     planning.plan,

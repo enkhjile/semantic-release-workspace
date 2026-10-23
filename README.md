@@ -176,6 +176,21 @@ the journal. Later plans use those ranges while their original manifest values
 remain unchanged; an edited dependency requirement takes precedence. This keeps
 successive planning batches consistent without writing manifests. In `publish: false` mode these records are planning history, not evidence of registry publication.
 
+## Package release notes
+
+Release notes summarize each released npm package and Cargo crate separately,
+using only its attributed commits. Features, fixes and breaking changes use the
+standard Conventional Commit notes generator with the same `preset`, `config`,
+`presetConfig` and `parserOpts` used for analysis. Dependency-driven releases
+include their changed requirements even when no direct commit triggered a release.
+Private packages are labelled, and unchanged packages receive no new entry.
+
+The workspace summary names the branch, npm destination channels and Cargo's
+SemVer/Git channels. Dates come from the source commit. The JSON version plan
+remains available in a collapsible section. Pending journals retain exact notes
+for recovery from fresh clones; promotions reuse the original notes for all
+promoted versions, including packages unchanged in the latest batch.
+
 ## Prereleases, maintenance and release channels
 
 Configure branches through semantic-release's standard `branches` option:

@@ -42,7 +42,25 @@ export interface ReleasePlan {
   groups: string[][];
 }
 
+export interface ChangelogChange {
+  path: string;
+  before: string | null;
+  after: string;
+}
+export interface PackageNotes {
+  id: string;
+  version: string;
+  channel: string | null;
+  notes: string;
+}
+export interface ReleaseNotes {
+  changelog: boolean;
+  date: string;
+  packages: PackageNotes[];
+  changelogs: ChangelogChange[];
+}
 export interface PlanningState {
+  releaseNotes?: ReleaseNotes;
   plan: ReleasePlan;
   versions: PackageVersion[];
   dependencyRanges: DependencyUpdate[];

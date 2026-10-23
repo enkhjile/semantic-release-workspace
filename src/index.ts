@@ -26,7 +26,7 @@ import {
   snapshot,
   writeJournal,
 } from './journal.js';
-import { createVersionPlan, planNotes } from './planning.js';
+import { createVersionPlan } from './planning.js';
 import {
   preflight,
   preparePublication,
@@ -34,6 +34,12 @@ import {
   publishPackages,
   recoverManifests,
 } from './publication.js';
+import {
+  changelogEnabled,
+  checkNotesPolicy,
+  formatReleaseNotes,
+  notesForRelease,
+} from './release-notes.js';
 
 type PluginConfig = Record<string, unknown>;
 
@@ -50,6 +56,7 @@ export async function verifyConditions(
       'EWORKSPACECONFIG',
     );
   }
+  changelogEnabled(config);
   npmChannel(context.branch.channel);
   if (
     branchType(context) === 'prerelease' &&
@@ -69,6 +76,7 @@ export async function verifyConditions(
       'EWORKSPACECONFIG',
     );
   }
+  checkNotesPolicy(config, (await snapshot(context)).journal);
   if (publishing(config) && !context.options.dryRun)
     await recoverManifests(context);
   if (await git(context, 'status', '--porcelain', '--untracked-files=normal')) {
@@ -134,8 +142,15 @@ export async function generateNotes(
   const promotion = await planPromotion(config, context);
   if (promotion) return promotion;
   const planning = await createVersionPlan(config, context);
-  if (planning.plan.packages.length)
-    return planNotes(planning.plan, publishing(config));
+  if (planning.plan.packages.length) {
+    const notes = await notesForRelease(
+      config,
+      context,
+      planning,
+      await preflight(config, context, planning),
+    );
+    return formatReleaseNotes(context, planning, notes, publishing(config));
+  }
   const { current, commits } = await commitsSinceCompletion(context);
   return [
     '# Workspace batch lifecycle proof',
@@ -168,6 +183,13 @@ export async function prepare(
     await recordChannels(context, planning.plan.head);
     return;
   }
+  if (planning.plan.packages.length)
+    planning.releaseNotes = await notesForRelease(
+      config,
+      context,
+      planning,
+      [],
+    );
   await writeJournal(
     context,
     planning.current,

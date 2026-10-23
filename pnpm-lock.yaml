@@ -219,6 +219,9 @@ importers:
       "@semantic-release/error":
         specifier: 4.0.0
         version: 4.0.0
+      "@semantic-release/release-notes-generator":
+        specifier: 14.1.1
+        version: 14.1.1(semantic-release@25.0.9(supports-color@7.2.0)(typescript@7.0.2))(supports-color@7.2.0)
       fast-glob:
         specifier: 3.3.3
         version: 3.3.3
@@ -256,9 +259,6 @@ importers:
       "@semantic-release/npm":
         specifier: 13.2.0
         version: 13.2.0(semantic-release@25.0.9(supports-color@7.2.0)(typescript@7.0.2))
-      "@semantic-release/release-notes-generator":
-        specifier: 14.1.1
-        version: 14.1.1(semantic-release@25.0.9(supports-color@7.2.0)(typescript@7.0.2))(supports-color@7.2.0)
       "@sigstore/mock":
         specifier: 0.12.1
         version: 0.12.1(supports-color@7.2.0)
