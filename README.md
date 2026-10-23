@@ -191,6 +191,43 @@ remains available in a collapsible section. Pending journals retain exact notes
 for recovery from fresh clones; promotions reuse the original notes for all
 promoted versions, including packages unchanged in the latest batch.
 
+### Optional changelogs
+
+Set `changelog: true` on the workspace plugin to generate `CHANGELOG.md` in each
+released package directory. The default is `false`; other value types fail
+verification. With no discovered packages, the option has no file output and does not affect retries. For example:
+
+```js
+export default {
+  branches: ['main'],
+  tagFormat: 'workspace-v${version}',
+  plugins: [['semantic-release-workspace', { changelog: true }]],
+};
+```
+
+Entries contain the ecosystem/package name, version, source date, channel and
+package notes. npm and Cargo packages sharing a directory share one changelog.
+The plugin prepends each new entry and carries forward the eligible released
+history. Explicitly committed source edits take precedence. Re-enabling the
+option preserves older generated history while releases made with it disabled
+receive no retroactive entry. Stable histories exclude prerelease entries;
+prerelease branches retain their own identifier's history.
+
+Changelogs live in the immutable prepared release commit, alongside versioned
+manifests, and in package archives according to native npm/Cargo file-selection
+rules. They are available through the per-package Git tags and retained prepared
+refs. Publication restores existing checkout bytes and removes newly generated
+files, including after failure; it does not create a source-branch commit.
+`publish: false` previews and records notes without preparing or writing files.
+Dry runs preview paths without file, ref, package or registry mutations.
+
+Pending batches freeze their changelog policy and exact before/after bytes.
+Changing the option during retry is rejected, and legacy pending batches cannot
+retroactively enable it. Recovery restores only expected release bytes, rejecting
+user edits, ignored files outside committed history and symlinked paths.
+Changelog inputs must contain valid UTF-8; invalid encodings fail before mutation.
+Channel promotion reuses the original notes and changelogs without new entries.
+
 ## Prereleases, maintenance and release channels
 
 Configure branches through semantic-release's standard `branches` option:

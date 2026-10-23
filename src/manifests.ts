@@ -1,3 +1,5 @@
+import { isUtf8 } from 'node:buffer';
+import type { Stats } from 'node:fs';
 import {
   chmod,
   lstat,
@@ -134,7 +136,7 @@ export function editManifest(
 
 export interface ManifestChange {
   path: string;
-  before: string;
+  before: string | null;
   after: string;
 }
 export async function manifestChanges(
@@ -173,26 +175,40 @@ export async function applyManifests(
   restore = false,
 ): Promise<void> {
   const gitDir = await git({ cwd: root }, 'rev-parse', '--absolute-git-dir');
-  const valid: ManifestChange[] = [];
+  const valid: { change: ManifestChange; mode: number }[] = [];
   let conflict: string | undefined;
   for (const change of changes) {
     try {
-      const actual = await readManifest(root, change.path);
+      const actual = await readReleaseFile(root, change.path);
       if (actual !== change.before && actual !== change.after)
         conflict ??= change.path;
-      else valid.push(change);
+      else
+        valid.push({
+          change,
+          mode:
+            actual === null
+              ? 0o644
+              : (await lstat(join(root, change.path))).mode,
+        });
     } catch {
       conflict ??= change.path;
     }
   }
   if (!conflict || restore)
-    for (const change of valid) {
+    for (const { change, mode } of valid) {
       const file = join(root, change.path);
+      if (restore && change.before === null) {
+        await rm(file, { force: true });
+        continue;
+      }
       const directory = await mkdtemp(join(gitDir, 'workspace-manifest-'));
       try {
         const temporary = join(directory, 'manifest');
-        await writeFile(temporary, restore ? change.before : change.after);
-        await chmod(temporary, (await lstat(file)).mode);
+        await writeFile(
+          temporary,
+          restore ? (change.before as string) : change.after,
+        );
+        await chmod(temporary, mode);
         // Before/after bytes stay intact even if this process terminates mid-write.
         await rename(temporary, file);
       } finally {
@@ -206,15 +222,26 @@ export async function applyManifests(
     );
 }
 
-export async function readManifest(
+export async function readReleaseFile(
   root: string,
   path: string,
-): Promise<string> {
+): Promise<string | null> {
   const parts = path.split(/[\\/]/).filter((part) => part !== '.');
   if (isAbsolute(path) || parts.some((part) => part === '..'))
     throw new SemanticReleaseError('Invalid manifest path.', 'EWORKSPACEDIRTY');
   for (let index = 0; index < parts.length; index++) {
-    const info = await lstat(join(root, ...parts.slice(0, index + 1)));
+    let info: Stats;
+    try {
+      info = await lstat(join(root, ...parts.slice(0, index + 1)));
+    } catch (error) {
+      if (
+        index === parts.length - 1 &&
+        record(error) &&
+        error.code === 'ENOENT'
+      )
+        return null;
+      throw error;
+    }
     if (
       info.isSymbolicLink() ||
       (index === parts.length - 1 ? !info.isFile() : !info.isDirectory())
@@ -224,5 +251,11 @@ export async function readManifest(
         'EWORKSPACEDIRTY',
       );
   }
-  return readFile(join(root, path), 'utf8');
+  const bytes = await readFile(join(root, path));
+  if (!isUtf8(bytes))
+    throw new SemanticReleaseError(
+      'Release files must contain valid UTF-8.',
+      'EWORKSPACEDIRTY',
+    );
+  return bytes.toString('utf8');
 }

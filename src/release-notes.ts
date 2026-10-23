@@ -1,9 +1,10 @@
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { generateNotes as conventionalNotes } from '@semantic-release/release-notes-generator';
 import type { VerifyConditionsContext } from 'semantic-release';
 import { npmChannel } from './branches.js';
-import { git, type Journal } from './journal.js';
+import { changelogChanges } from './changelogs.js';
+import { git, type Journal, type Snapshot } from './journal.js';
 import type { PlanningState, ReleaseNotes } from './plan-types.js';
 import { planNotes } from './planning.js';
 import type { PublicationPackage } from './publication-state.js';
@@ -21,6 +22,7 @@ export function checkNotesPolicy(
   const enabled = changelogEnabled(config);
   if (
     pending?.status === 'pending' &&
+    pending.planning?.plan.packages.length &&
     enabled !== (pending.planning?.releaseNotes?.changelog ?? false)
   )
     releaseError(
@@ -31,7 +33,7 @@ export function checkNotesPolicy(
 export async function notesForRelease(
   config: Record<string, unknown>,
   context: VerifyConditionsContext,
-  planning: PlanningState,
+  planning: PlanningState & { current: Snapshot },
   destinations: PublicationPackage[],
 ): Promise<ReleaseNotes> {
   if (planning.releaseNotes) return planning.releaseNotes;
@@ -69,7 +71,7 @@ export async function notesForRelease(
       },
       {
         ...context,
-        cwd: join(context.cwd ?? process.cwd(), pkg.path),
+        cwd: context.cwd ?? process.cwd(),
         commits: pkg.commits,
         lastRelease: {
           gitTag: pkg.currentVersion
@@ -101,8 +103,9 @@ export async function notesForRelease(
     result.packages.push({
       id: pkg.id,
       version: pkg.nextVersion,
-      channel:
-        pkg.ecosystem === 'npm'
+      channel: pkg.private
+        ? null
+        : pkg.ecosystem === 'npm'
           ? (destinations.find((entry) => entry.id === pkg.id)?.destination
               .tag ?? npmChannel(context.branch.channel))
           : context.branch.channel || null,
@@ -111,6 +114,7 @@ export async function notesForRelease(
         'Maintenance release.',
     });
   }
+  result.changelogs = await changelogChanges(context, planning, result);
   return result;
 }
 export function formatReleaseNotes(
@@ -123,7 +127,7 @@ export function formatReleaseNotes(
   const channels = [
     ...new Set(
       notes.packages
-        .filter((pkg) => pkg.id.startsWith('npm:'))
+        .filter((pkg) => pkg.id.startsWith('npm:') && pkg.channel !== null)
         .map((pkg) => pkg.channel),
     ),
   ];
@@ -151,6 +155,12 @@ export function formatReleaseNotes(
       pkg.notes,
       '',
     ]),
+    ...(notes.changelogs.length
+      ? [
+          `Changelogs: ${notes.changelogs.map((change) => `\`${change.path}\``).join(', ')}`,
+          '',
+        ]
+      : []),
     '<details>',
     '<summary>Workspace version plan</summary>',
     '',

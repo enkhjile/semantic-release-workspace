@@ -1,3 +1,4 @@
+import { isUtf8 } from 'node:buffer';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -143,12 +144,22 @@ export async function preparedCommit(
       )
         .toString()
         .trim();
-      const mode = (
-        await git(context, 'ls-tree', head, '--', change.path)
-      ).split(' ')[0];
+      const row = await git(
+        context,
+        '--literal-pathspecs',
+        'ls-tree',
+        head,
+        '--',
+        change.path,
+      );
+      const mode = row
+        ? row.split(' ')[0]
+        : change.before === null
+          ? '100644'
+          : undefined;
       if (!mode || (mode !== '100644' && mode !== '100755'))
         releaseError(
-          'Only tracked regular manifests can be prepared.',
+          'Only regular release files can be prepared.',
           'EWORKSPACEMANIFEST',
         );
       await git(
@@ -255,4 +266,32 @@ export async function readArtifact(
     ).toString(),
   );
   return { bytes, metadata };
+}
+
+export async function readGitFile(
+  context: GitContext,
+  revision: string,
+  path: string,
+): Promise<string | null> {
+  const row = await git(
+    context,
+    '--literal-pathspecs',
+    'ls-tree',
+    revision,
+    '--',
+    path,
+  );
+  if (!row) return null;
+  if (!/^100(?:644|755) blob /.test(row))
+    releaseError(
+      'Release history contains a non-regular file.',
+      'EWORKSPACEARTIFACT',
+    );
+  const bytes = await command(context, 'git', ['show', `${revision}:${path}`]);
+  if (!isUtf8(bytes))
+    releaseError(
+      'Release history must contain valid UTF-8.',
+      'EWORKSPACEARTIFACT',
+    );
+  return bytes.toString('utf8');
 }

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -146,4 +147,128 @@ test('channel promotion summarizes retained notes for unchanged package versions
   expect(text).toContain('new application');
   expect(text).toContain('adopt new library API');
   expect(text).toContain('No new changelog entries');
+});
+
+test.each(['yes', 0, {}])(
+  'invalid changelog option %j fails before writing release state',
+  (changelog) => {
+    const repo = workspace();
+    change(repo, 'packages/lib/index.js', 'feat: invalid option');
+    const refs = repo.refs();
+    const result = repo.run({ pluginConfig: { changelog } });
+    expect(result.ok).toBe(false);
+    expect(result.codes).toContain('EWORKSPACECONFIG');
+    expect(repo.refs()).toBe(refs);
+  },
+);
+
+test('package notes use the same breaking-note parser options as version analysis', () => {
+  const repo = workspace();
+  change(
+    repo,
+    'packages/lib/index.js',
+    'feat: migrate library\n\nMIGRATION: replace the old library API',
+  );
+  const text = notes(
+    repo.run({
+      dryRun: true,
+      pluginConfig: { parserOpts: { noteKeywords: ['MIGRATION'] } },
+    }),
+  );
+  expect(text).toContain('## npm:lib@2.0.0');
+  expect(text).toContain('BREAKING CHANGES');
+  expect(text).toContain('replace the old library API');
+});
+
+test('summaries use the source commit date and actual npm tag without inventing private-package channels', () => {
+  const repo = workspace();
+  const file = join(repo.cwd, 'packages/app/package.json');
+  writeFileSync(
+    file,
+    JSON.stringify({
+      name: 'app',
+      version: '1.0.0',
+      private: true,
+      dependencies: { lib: '1.0.0' },
+    }),
+  );
+  repo.git(repo.cwd, 'add', '.');
+  repo.commit('chore: private application');
+  change(repo, 'packages/lib/index.js', 'feat: publish library preview');
+  execFileSync(
+    'git',
+    ['commit', '--amend', '--no-edit', '--date=2001-02-03T12:00:00Z'],
+    {
+      cwd: repo.cwd,
+      env: { ...repo.env, GIT_COMMITTER_DATE: '2001-02-03T12:00:00Z' },
+      stdio: 'ignore',
+    },
+  );
+  repo.git(repo.cwd, 'push', '--force', 'origin', 'main');
+  const text = notes(
+    repo.run({
+      dryRun: true,
+      pluginConfig: {
+        publish: true,
+        npm: { registry: 'http://127.0.0.1:1', tag: 'preview' },
+      },
+    }),
+  );
+  expect(text).toContain('Source date: 2001-02-03');
+  expect(text).toContain('npm channel: `preview`\n');
+  expect(text).toContain('## npm:app@1.0.1 (private)');
+});
+
+test('relative root presets resolve consistently for version analysis and package notes', () => {
+  const repo = workspace();
+  writeFileSync(
+    join(repo.cwd, 'notes-preset.cjs'),
+    "module.exports = () => ({ parser: { noteKeywords: ['MIGRATION'] } });\n",
+  );
+  repo.git(repo.cwd, 'add', '.');
+  repo.commit('chore: configure root preset');
+  change(
+    repo,
+    'packages/lib/index.js',
+    'feat: apply root preset\n\nMIGRATION: root configured migration',
+  );
+  const text = notes(
+    repo.run({ dryRun: true, pluginConfig: { config: './notes-preset.cjs' } }),
+  );
+  expect(text).toContain('## npm:lib@2.0.0');
+  expect(text).toContain('root configured migration');
+});
+
+test('an existing release heading stays attached to its notes below the newly generated version', () => {
+  const repo = workspace();
+  writeFileSync(
+    join(repo.cwd, 'packages/lib/CHANGELOG.md'),
+    '## 0.9.0\n\nOld release notes.\n',
+  );
+  repo.git(repo.cwd, 'add', '.');
+  repo.commit('chore: previous release notes without a title');
+  change(repo, 'packages/lib/index.js', 'feat: current release notes');
+  const result = repo.run({ pluginConfig: { changelog: true } });
+  expect(result.ok, result.logs).toBe(true);
+  const text = repo
+    .state()
+    .planning.releaseNotes.changelogs.find(
+      (change: { path: string }) => change.path === 'packages/lib/CHANGELOG.md',
+    ).after;
+  expect(text.indexOf('## npm:lib@1.1.0')).toBeLessThan(
+    text.indexOf('## 0.9.0'),
+  );
+  expect(text).toContain('## 0.9.0\n\nOld release notes.');
+});
+
+test('changelog:true remains retryable when discovery finds no packages', () => {
+  const repo = fixture();
+  repo.commit('feat: repository lifecycle without packages');
+  const settings = { pluginConfig: { changelog: true } };
+  const first = repo.run({ ...settings, failure: 'publish' });
+  expect(first.codes).toContain('EINJECTED');
+  expect(repo.state().status).toBe('pending');
+  const retry = repo.run(settings, repo.clone());
+  expect(retry.ok, retry.logs).toBe(true);
+  expect(repo.state().status).toBe('complete');
 });

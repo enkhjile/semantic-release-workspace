@@ -6,7 +6,7 @@ import {
   applyManifests,
   type ManifestChange,
   manifestChanges,
-  readManifest,
+  readReleaseFile,
 } from './manifests.js';
 import { hasIdentity } from './npm-identity.js';
 import {
@@ -28,6 +28,7 @@ import {
   fetchRef,
   preparedCommit,
   readArtifact,
+  readGitFile,
   refFor,
   releaseError,
   releaseScope,
@@ -235,10 +236,10 @@ export async function preparePublication(
     planning,
     entries,
   );
-  const changes = await manifestChanges(
-    context.cwd ?? process.cwd(),
-    planning.plan,
-  );
+  const changes = [
+    ...(await manifestChanges(context.cwd ?? process.cwd(), planning.plan)),
+    ...planning.releaseNotes.changelogs,
+  ];
   const prepared = await preparedCommit(context, planning.plan.head, changes);
   for (const entry of entries)
     if (entry.destination.ecosystem === 'cargo')
@@ -319,7 +320,10 @@ export async function publishPackages(
     );
   const root = context.cwd ?? process.cwd();
   const inventory = await discoverWorkspaces(root);
-  const changes = await manifestChanges(root, planning.plan);
+  const changes = [
+    ...(await manifestChanges(root, planning.plan)),
+    ...(planning.releaseNotes?.changelogs ?? []),
+  ];
   const persist = () =>
     writeJournal(
       context,
@@ -517,21 +521,28 @@ export async function recoverManifests(
     .filter(Boolean);
   const changes: ManifestChange[] = [];
   for (const path of paths) {
+    const changelog = current.journal.planning?.releaseNotes?.changelogs.find(
+      (change) => change.path === path,
+    );
     if (
-      !/(?:^|\/)(?:package.json|Cargo.toml)$/.test(path) ||
+      (!/(?:^|\/)(?:package.json|Cargo.toml)$/.test(path) && !changelog) ||
       path.split('/').includes('..')
     )
       return releaseError(
         'Prepared commit contains unexpected files.',
         'EWORKSPACEARTIFACT',
       );
-    const before = (
-      await command(context, 'git', ['show', `${current.head}:${path}`])
-    ).toString();
-    const after = (
-      await command(context, 'git', ['show', `${prepared}:${path}`])
-    ).toString();
-    const actual = await readManifest(context.cwd ?? process.cwd(), path);
+    const before = await readGitFile(context, current.head, path);
+    const after = await readGitFile(context, prepared, path);
+    if (
+      after === null ||
+      (changelog && (before !== changelog.before || after !== changelog.after))
+    )
+      return releaseError(
+        'Prepared changelog bytes differ from the frozen batch.',
+        'EWORKSPACEARTIFACT',
+      );
+    const actual = await readReleaseFile(context.cwd ?? process.cwd(), path);
     if (actual !== before && actual !== after)
       return releaseError(
         'Checkout contains edits outside the prepared release.',
