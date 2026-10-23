@@ -21,6 +21,7 @@ jobs:
       matrix:
         include:
           - node: project
+            # Empty lets pnpm/setup read devEngines.runtime from package.json.
             runtime: ""
           - node: latest
             runtime: node@latest
