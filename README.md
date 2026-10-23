@@ -4,9 +4,90 @@ Workspace-aware monorepo releases for semantic-release.
 
 ## Status
 
-This repository contains the package foundation, development tooling, and
-release pipeline. Workspace discovery and release lifecycle hooks are not
-implemented yet; this scaffold is not a usable monorepo plugin.
+Milestone 1 implements and tests the real semantic-release plugin lifecycle:
+workspace batch tags, read-only release previews, no-change runs, and durable
+retry after a failed run. It does **not** discover workspaces, assign per-package
+versions, coordinate dependencies, or publish npm packages yet.
+
+## Lifecycle proof
+
+Load the package directly through `plugins` in a consumer repository:
+
+```js
+export default {
+  branches: ['main'],
+  tagFormat: 'workspace-v${version}',
+  plugins: ['semantic-release-workspace'],
+};
+```
+
+Run `semantic-release` from a clean repository root, with one stable release
+branch, full Git history, and permission to push tags and Git notes. Serialize
+release jobs for the repository. Other release branches, prereleases, dirty
+checkouts, and running from a package subdirectory are rejected in this milestone.
+
+Do not add a separate root commit analyzer or npm publisher to this consumer
+configuration. The coordinator owns the batch trigger; package publication will
+arrive in a later milestone. This repository's own `release.config.mjs` continues
+using standard plugins to version and publish the plugin package itself.
+
+The exported hooks are `verifyConditions`, `analyzeCommits`, `verifyRelease`,
+`generateNotes`, `prepare`, `publish`, `success`, and `fail`. The proof reads
+repository-wide commits using the standard Conventional Commit analyzer. It
+honors `[skip release]` and `[release skip]`; documentation/chore-only changes do
+not trigger a batch. Until discovery is implemented, file ownership is not used.
+
+### Batch tags and completion
+
+semantic-release core creates and pushes the batch tag. A batch starts at
+`workspace-v1.0.0`; later attempts increment its patch version, regardless of the
+underlying commit's release type. These are coordinator attempt versions, not
+package versions.
+
+Completion is recorded separately in `refs/notes/semantic-release-workspace`.
+The journal is a versioned JSON note attached to the repository's single root
+commit; it records the release branch, source commit, previous completed source
+commit, attempted batch tag, and `pending` or `complete` status.
+- `prepare` pushes a pending journal **before** core creates its batch tag.
+- `publish` returns a lifecycle proof result and publishes no packages.
+- `success` marks the batch complete after all publish hooks have succeeded.
+- `fail` preserves pending state. A failure before journal creation leaves no
+  pending state.
+
+Analysis uses the previous completed source commit rather than the most recent
+batch tag. A tag from a failed run therefore cannot hide unfinished work.
+
+### Retry and dry-run behavior
+
+After failure, rerun the same source commit, including from a fresh clone.
+The plugin fetches its journal from the configured release remote. A pending
+batch blocks newer source commits until the original source commit is recovered.
+A retry after a pushed tag receives another batch tag; a retry before tagging can
+use the original candidate tag. The logical work and completion baseline remain
+the same. Successful work is not released again on the next invocation.
+
+A `--dry-run` previews notes and the next batch version without preparing,
+publishing, pushing a journal, or creating tags. Git metadata may be fetched,
+as in semantic-release itself. Source files and remote refs remain unchanged,
+including when previewing a pending retry.
+
+Missing state alongside existing reachable workspace tags, malformed journals,
+and journal/tag mismatches stop the run. Restore damaged journal state rather
+than deleting it to bypass recovery checks. Git notes are part of release state
+and must be retained by repository backups and mirrors.
+
+Completion covers publication, not subsequent reporting hooks: a reporter that
+fails after this plugin's `success` hook may fail the overall command even though
+the batch is already complete. Do not use reporting failure to republish work.
+
+### Verification
+
+`pnpm test` builds the package and runs real semantic-release 25 invocations in
+separate Node processes against disposable local bare Git remotes. No GitHub
+repository, npm publication, network credentials, or mocked core is required.
+Tests exercise remote refs, persisted journal state, clean source files,
+no-change runs, dry-run previews, fresh-clone recovery before/after tagging,
+blocked newer commits, and damaged recovery state.
 
 ## Development
 

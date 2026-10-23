@@ -206,13 +206,17 @@ settings:
 
 importers:
   .:
+    dependencies:
+      "@semantic-release/commit-analyzer":
+        specifier: 13.0.1
+        version: 13.0.1(semantic-release@25.0.9(supports-color@7.2.0)(typescript@7.0.2))(supports-color@7.2.0)
+      "@semantic-release/error":
+        specifier: 4.0.0
+        version: 4.0.0
     devDependencies:
       "@biomejs/biome":
         specifier: 2.6.2
         version: 2.6.2
-      "@semantic-release/commit-analyzer":
-        specifier: 13.0.1
-        version: 13.0.1(semantic-release@25.0.9(supports-color@7.2.0)(typescript@7.0.2))(supports-color@7.2.0)
       "@semantic-release/github":
         specifier: 12.0.10
         version: 12.0.10(semantic-release@25.0.9(supports-color@7.2.0)(typescript@7.0.2))(supports-color@7.2.0)

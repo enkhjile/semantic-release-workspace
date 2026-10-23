@@ -1,0 +1,359 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterEach, describe, expect, test } from 'vitest';
+
+const plugin = fileURLToPath(new URL('../dist/index.mjs', import.meta.url));
+const runner = fileURLToPath(
+  new URL('./fixtures/run-release.mjs', import.meta.url),
+);
+const journalRef = 'refs/notes/semantic-release-workspace';
+const roots: string[] = [];
+
+interface Outcome {
+  ok: boolean;
+  result?:
+    | false
+    | {
+        commits: { message: string }[];
+        nextRelease: {
+          type: string;
+          version: string;
+          gitTag: string;
+          notes: string;
+        };
+      };
+  codes?: string[];
+  message?: string;
+  logs: string;
+}
+
+function fixture() {
+  const root = mkdtempSync(join(tmpdir(), 'semantic-release-workspace-'));
+  roots.push(root);
+  const remote = join(root, 'remote.git');
+  const cwd = join(root, 'source');
+  const env = {
+    PATH: process.env.PATH,
+    HOME: root,
+    TMPDIR: process.env.TMPDIR ?? tmpdir(),
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: '/dev/null',
+  };
+  const git = (directory: string, ...args: string[]) =>
+    execFileSync('git', args, {
+      cwd: directory,
+      env,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  git(root, 'init', '--bare', '--initial-branch=main', remote);
+  git(root, 'init', '-b', 'main', cwd);
+  const identity = (directory: string) => {
+    git(directory, 'config', 'user.name', 'Lifecycle Test');
+    git(directory, 'config', 'user.email', 'lifecycle@example.invalid');
+  };
+  identity(cwd);
+  identity(remote);
+  writeFileSync(
+    join(cwd, 'package.json'),
+    '{"name":"fixture","private":true}\n',
+  );
+  git(cwd, 'add', '.');
+  git(cwd, 'commit', '-m', 'chore: initialize fixture');
+  git(cwd, 'remote', 'add', 'origin', remote);
+  git(cwd, 'push', '-u', 'origin', 'main');
+  const anchor = git(cwd, 'rev-parse', 'HEAD');
+  return {
+    cwd,
+    remote,
+    anchor,
+    git,
+    commit(message: string) {
+      git(cwd, 'commit', '--allow-empty', '-m', message);
+      git(cwd, 'push', 'origin', 'main');
+      return git(cwd, 'rev-parse', 'HEAD');
+    },
+    clone() {
+      const directory = join(root, 'retry');
+      git(root, 'clone', remote, directory);
+      identity(directory);
+      return directory;
+    },
+    refs() {
+      return git(remote, 'for-each-ref', '--format=%(refname) %(objectname)');
+    },
+    tags() {
+      return git(remote, 'tag', '--list').split('\n').filter(Boolean);
+    },
+    state() {
+      return JSON.parse(
+        git(remote, 'notes', `--ref=${journalRef}`, 'show', anchor),
+      );
+    },
+    run(
+      settings: {
+        dryRun?: boolean;
+        failure?: 'prepare' | 'after-prepare' | 'publish';
+        tagFormat?: string;
+      } = {},
+      directory = cwd,
+    ): Outcome {
+      const stdout = execFileSync(
+        process.execPath,
+        [runner, directory, remote, plugin, JSON.stringify(settings)],
+        {
+          cwd: directory,
+          env,
+          encoding: 'utf8',
+          timeout: 30_000,
+          maxBuffer: 4 * 1024 * 1024,
+        },
+      );
+      const line = stdout
+        .split('\n')
+        .find((entry) => entry.startsWith('RESULT:'));
+      if (!line)
+        throw new Error(`Release runner did not return a result: ${stdout}`);
+      return JSON.parse(line.slice('RESULT:'.length));
+    },
+  };
+}
+
+afterEach(() => {
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
+});
+
+describe('real semantic-release lifecycle', () => {
+  test('loads via plugins and pushes a completed batch without changing source files', () => {
+    const f = fixture();
+    const head = f.commit('feat: add a workspace feature');
+    const outcome = f.run();
+    expect(outcome.ok, outcome.logs).toBe(true);
+    expect(outcome.result).toMatchObject({
+      nextRelease: {
+        type: 'patch',
+        version: '1.0.0',
+        gitTag: 'workspace-v1.0.0',
+      },
+    });
+    expect(f.tags()).toEqual(['workspace-v1.0.0']);
+    expect(f.state()).toMatchObject({
+      schemaVersion: 1,
+      status: 'complete',
+      head,
+      baseHead: null,
+      batchTag: 'workspace-v1.0.0',
+    });
+    expect(f.git(f.cwd, 'status', '--porcelain')).toBe('');
+    expect(f.git(f.cwd, 'rev-parse', 'HEAD')).toBe(head);
+    expect(readFileSync(join(f.cwd, 'package.json'), 'utf8')).toBe(
+      '{"name":"fixture","private":true}\n',
+    );
+  });
+
+  test('dry-run previews a batch without writing remote refs, journals, tags, or files', () => {
+    const f = fixture();
+    f.commit('feat: preview workspace work');
+    const before = f.refs();
+    const outcome = f.run({ dryRun: true });
+    expect(outcome.ok, outcome.logs).toBe(true);
+    expect(outcome.result).toMatchObject({
+      nextRelease: {
+        type: 'patch',
+        gitTag: 'workspace-v1.0.0',
+        notes: expect.stringContaining('preview workspace work'),
+      },
+    });
+    expect(f.refs()).toBe(before);
+    expect(
+      f.git(f.cwd, 'for-each-ref', '--format=%(refname)', journalRef),
+    ).toBe('');
+    expect(f.git(f.cwd, 'status', '--porcelain')).toBe('');
+  });
+
+  test('no-change runs and skipped commits create no batch', () => {
+    const f = fixture();
+    f.commit('feat: ignored work [skip release]');
+    const before = f.refs();
+    const outcome = f.run();
+    expect(outcome.ok, outcome.logs).toBe(true);
+    expect(outcome.result).toBe(false);
+    expect(f.refs()).toBe(before);
+  });
+
+  test('completed work is not released again, while later fixes create a patch batch', () => {
+    const f = fixture();
+    const firstHead = f.commit('feat: first release');
+    expect(f.run().ok).toBe(true);
+    const before = f.refs();
+    expect(f.run().result).toBe(false);
+    expect(f.refs()).toBe(before);
+    f.commit('docs: describe the workspace');
+    expect(f.run().result).toBe(false);
+    const head = f.commit('fix: repair workspace behavior');
+    expect(f.run().result).toMatchObject({ nextRelease: { version: '1.0.1' } });
+    expect(f.state()).toMatchObject({
+      status: 'complete',
+      head,
+      baseHead: firstHead,
+    });
+  });
+
+  test('fresh checkout retries after a tag was pushed but publication failed', () => {
+    const f = fixture();
+    const head = f.commit('feat: retry this batch');
+    const failed = f.run({ failure: 'publish' });
+    expect(failed.ok).toBe(false);
+    expect(failed.message).toContain('Injected lifecycle failure');
+    expect(failed.logs).toContain(
+      'Any pending journal is preserved for retry.',
+    );
+    expect(f.tags()).toEqual(['workspace-v1.0.0']);
+    expect(f.state()).toMatchObject({
+      status: 'pending',
+      head,
+      baseHead: null,
+    });
+    const clone = f.clone();
+    const before = f.refs();
+    expect(f.run({ dryRun: true }, clone).result).toMatchObject({
+      nextRelease: {
+        version: '1.0.1',
+        notes: expect.stringContaining('retry this batch'),
+      },
+    });
+    expect(f.refs()).toBe(before);
+    expect(f.state().status).toBe('pending');
+    const retried = f.run({}, clone);
+    expect(retried.ok, retried.logs).toBe(true);
+    expect(retried.result).toMatchObject({
+      commits: [],
+      nextRelease: { type: 'patch', gitTag: 'workspace-v1.0.1' },
+    });
+    expect(f.tags()).toEqual(['workspace-v1.0.0', 'workspace-v1.0.1']);
+    expect(f.state()).toMatchObject({
+      status: 'complete',
+      head,
+      baseHead: null,
+    });
+    expect(f.run({}, clone).result).toBe(false);
+  });
+
+  test('failure before preparation writes no checkpoint and can be retried', () => {
+    const f = fixture();
+    f.commit('feat: work awaiting preparation');
+    const before = f.refs();
+    expect(f.run({ failure: 'prepare' }).ok).toBe(false);
+    expect(f.refs()).toBe(before);
+    expect(f.run().result).toMatchObject({
+      nextRelease: { gitTag: 'workspace-v1.0.0' },
+    });
+  });
+
+  test('unfinished work blocks a newer source commit without creating another tag', () => {
+    const f = fixture();
+    const head = f.commit('feat: unfinished batch');
+    expect(f.run({ failure: 'publish' }).ok).toBe(false);
+    f.commit('fix: newer work');
+    const before = f.refs();
+    const outcome = f.run();
+    expect(outcome.ok).toBe(false);
+    expect(outcome.codes).toContain('EWORKSPACEPENDING');
+    expect(f.refs()).toBe(before);
+    expect(f.state()).toMatchObject({ status: 'pending', head });
+  });
+
+  test('pending preparation survives a failure before core creates its batch tag', () => {
+    const f = fixture();
+    const head = f.commit('feat: persist preparation before tagging');
+    expect(f.run({ failure: 'after-prepare' }).ok).toBe(false);
+    expect(f.tags()).toEqual([]);
+    expect(f.state()).toMatchObject({ status: 'pending', head });
+    const clone = f.clone();
+    expect(f.run({}, clone).result).toMatchObject({
+      nextRelease: { gitTag: 'workspace-v1.0.0' },
+    });
+    expect(f.state().status).toBe('complete');
+  });
+
+  test('missing journal with existing batch tags is rejected instead of re-releasing history', () => {
+    const f = fixture();
+    f.commit('feat: protect completed history');
+    expect(f.run().ok).toBe(true);
+    f.git(f.remote, 'update-ref', '-d', journalRef);
+    const before = f.refs();
+    const outcome = f.run();
+    expect(outcome.ok).toBe(false);
+    expect(outcome.codes).toContain('EWORKSPACEJOURNAL');
+    expect(f.refs()).toBe(before);
+  });
+
+  test('malformed journal fails without modifying any remote ref', () => {
+    const f = fixture();
+    f.commit('feat: validate durable release state');
+    expect(f.run().ok).toBe(true);
+    f.git(
+      f.remote,
+      'notes',
+      `--ref=${journalRef}`,
+      'add',
+      '-f',
+      '-m',
+      '{broken',
+      f.anchor,
+    );
+    const before = f.refs();
+    const outcome = f.run();
+    expect(outcome.ok).toBe(false);
+    expect(outcome.codes).toContain('EWORKSPACEJOURNAL');
+    expect(f.refs()).toBe(before);
+  });
+
+  test('journal source must match its completed batch tag', () => {
+    const f = fixture();
+    f.commit('feat: bind the journal to its release');
+    expect(f.run().ok).toBe(true);
+    const state = { ...f.state(), head: f.anchor };
+    f.git(
+      f.remote,
+      'notes',
+      `--ref=${journalRef}`,
+      'add',
+      '-f',
+      '-m',
+      JSON.stringify(state),
+      f.anchor,
+    );
+    const before = f.refs();
+    const outcome = f.run();
+    expect(outcome.ok).toBe(false);
+    expect(outcome.codes).toContain('EWORKSPACEJOURNAL');
+    expect(f.refs()).toBe(before);
+  });
+
+  test('dirty worktree cannot start a release', () => {
+    const f = fixture();
+    f.commit('feat: protect source fingerprint');
+    writeFileSync(join(f.cwd, 'untracked.txt'), 'uncommitted work');
+    const before = f.refs();
+    const outcome = f.run();
+    expect(outcome.ok).toBe(false);
+    expect(outcome.codes).toContain('EWORKSPACEDIRTY');
+    expect(f.refs()).toBe(before);
+  });
+
+  test('requires an explicit workspace tag namespace', () => {
+    const f = fixture();
+    f.commit('feat: reject ambiguous tags');
+    const before = f.refs();
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: semantic-release expands this placeholder.
+    const outcome = f.run({ tagFormat: 'v${version}' });
+    expect(outcome.ok).toBe(false);
+    expect(outcome.codes).toContain('EWORKSPACECONFIG');
+    expect(f.refs()).toBe(before);
+  });
+});
