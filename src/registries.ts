@@ -121,14 +121,13 @@ export async function destination(
     )
       .toString()
       .trim();
-    const access =
-      options.access !== undefined
-        ? options.access
-        : publish.access !== undefined
-          ? publish.access
-          : ['null', 'undefined'].includes(nativeAccess)
-            ? null
-            : nativeAccess;
+    let access: unknown;
+    if (options.access !== undefined) access = options.access;
+    else if (publish.access !== undefined) access = publish.access;
+    else
+      access = ['null', 'undefined'].includes(nativeAccess)
+        ? null
+        : nativeAccess;
     const tag =
       (releaseRoute(context)
         ? npmChannel(context.branch.channel)
@@ -248,7 +247,9 @@ async function request(
 }
 export const cargoIndexPath = (name: string) => {
   const lower = name.toLowerCase();
-  return `${lower.length < 3 ? lower.length : lower.length === 3 ? `3/${lower[0]}` : `${lower.slice(0, 2)}/${lower.slice(2, 4)}`}/${lower}`;
+  if (lower.length < 3) return `${lower.length}/${lower}`;
+  if (lower.length === 3) return `3/${lower[0]}/${lower}`;
+  return `${lower.slice(0, 2)}/${lower.slice(2, 4)}/${lower}`;
 };
 export async function completeCargoDestination(
   context: VerifyConditionsContext,
