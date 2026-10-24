@@ -3,6 +3,14 @@
   "version": "0.0.0-development",
   "description": "Workspace-aware monorepo releases for semantic-release.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enkhjile/semantic-release-workspace.git"
+  },
+  "homepage": "https://github.com/enkhjile/semantic-release-workspace#readme",
+  "bugs": {
+    "url": "https://github.com/enkhjile/semantic-release-workspace/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=24.0.0"

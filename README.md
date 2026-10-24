@@ -718,8 +718,8 @@ The plugin still creates GitHub releases with the generated release notes.
 See the [GitHub plugin options](https://github.com/semantic-release/github/tree/v12.0.10#options).
 
 Before enabling real publishing:
-1. Create a GitHub repository, set its `origin` remote, and add matching
-   `repository`, `homepage`, and `bugs` metadata in `package.json`.
+1. Confirm the `origin` remote and the `repository`, `homepage`, and `bugs`
+   metadata in `package.json` match the GitHub repository.
 2. Confirm the npm package name is available under your account. If npm requires
    an initial publication before adding a trusted publisher, bootstrap that
    publication only once the plugin is ready to use.
@@ -730,7 +730,7 @@ Before enabling real publishing:
 5. Run `pnpm release:dry-run` with the remote and required authentication in place
    before pushing a release-triggering commit.
 
-No remote, npm publication, or release tag is created by initialization.
+Pushes to `main` and `alpha` trigger the verification and release workflow.
 
 ## License
 
