@@ -84,8 +84,6 @@ function npmEdges(
       const manifestPath = `${pkg.path}/package.json`;
       const field = [section, name];
       let spec = rawSpec;
-      if (typeof spec !== 'string')
-        dependencyError(`Invalid dependency ${name} in ${packageId(pkg)}.`);
       let targetName = name;
       let range = spec;
       let protocol: Edge['protocol'] = 'semver';
@@ -391,18 +389,16 @@ export function coordinateDependencies(
   for (const edge of edges) {
     const target = byId.get(edge.target);
     const owner = byId.get(edge.owner);
-    if (target && owner) {
-      const proposed = update(edge, target);
-      if (proposed) {
-        const index = owner.dependencyUpdates.findIndex(
-          (entry) =>
-            key(entry.manifestPath, entry.field) ===
-            key(proposed.manifestPath, proposed.field),
-        );
-        if (index < 0) owner.dependencyUpdates.push(proposed);
-        else owner.dependencyUpdates[index] = proposed;
-      }
-    }
+    if (!target || !owner) continue;
+    const proposed = update(edge, target);
+    if (!proposed) continue;
+    const index = owner.dependencyUpdates.findIndex(
+      (entry) =>
+        key(entry.manifestPath, entry.field) ===
+        key(proposed.manifestPath, proposed.field),
+    );
+    if (index < 0) owner.dependencyUpdates.push(proposed);
+    else owner.dependencyUpdates[index] = proposed;
   }
   return {
     groups: groups(packages, edges),

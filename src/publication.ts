@@ -154,8 +154,8 @@ export async function preflight(
       planning.current.journal.execution?.packages.find(
         (pkg) => pkg.id === entry.id,
       )?.artifact;
+    if (retained) continue;
     if (
-      !retained &&
       entry.destination.npmAuth === 'oidc' &&
       !hasIdentity(context.env ?? process.env)
     )
@@ -164,7 +164,6 @@ export async function preflight(
         'EWORKSPACEOIDC',
       );
     if (
-      !retained &&
       entry.destination.cargoAuth === 'oidc' &&
       !hasCargoIdentity(context.env ?? process.env)
     )
@@ -172,7 +171,7 @@ export async function preflight(
         'Cargo trusted publishing requires GitHub Actions identity permissions or a GitLab CRATES_IO_ID_TOKEN.',
         'EWORKSPACEOIDC',
       );
-    if (!retained && entry.destination.ecosystem === 'npm')
+    if (entry.destination.ecosystem === 'npm')
       validateProvenanceContext(context, entry.destination, planning.plan.head);
   }
   return result;
