@@ -7,10 +7,13 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
+import { archiveFile } from '../src/archive.js';
 import type { PlanningState } from '../src/plan-types.js';
+import { registry, servers } from './fixtures/registry.js';
 import { fixture, roots } from './fixtures/repository.js';
 
 afterEach(() => {
+  for (const server of servers.splice(0)) server.kill();
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
 });
@@ -309,6 +312,51 @@ describe('package planning with real semantic-release', {
     expect(readFileSync(join(f.cwd, 'packages/b/package.json'), 'utf8')).toBe(
       manifest,
     );
+  });
+
+  test('published dependency projections survive a newer imported local version', async () => {
+    const f = setup();
+    const service = await registry();
+    const settings = {
+      env: service.env,
+      pluginConfig: { publish: true, npm: { registry: service.url } },
+    };
+    const publishedManifest = async (version: string) =>
+      JSON.parse(
+        await archiveFile(
+          Buffer.from(service.state().npm.app[version].artifact, 'base64'),
+          'package/package.json',
+        ),
+      );
+    f.npm('lib');
+    f.npm('app', '1.0.0', { dependencies: { lib: '1.0.0' } });
+    f.change('chore: set up packages');
+    f.file('packages/lib/index.js', 'new API');
+    f.change('feat: new library API\n\nBREAKING CHANGE: replace API');
+    const first = f.run(settings);
+    expect(first.ok, first.logs).toBe(true);
+    expect((await publishedManifest('1.0.1')).dependencies.lib).toBe('2.0.0');
+
+    f.file('packages/lib/index.js', 'imported API');
+    f.change('chore: import newer library release');
+    f.git(f.cwd, 'tag', 'npm/lib@3.0.0');
+    f.git(f.cwd, 'push', 'origin', 'npm/lib@3.0.0');
+    f.file('packages/app/index.js', 'repair');
+    f.change('fix: repair application');
+    const clone = f.clone();
+    const second = f.run(settings, clone);
+    expect(second.ok, second.logs).toBe(true);
+    expect((await publishedManifest('1.0.2')).dependencies.lib).toBe('2.0.0');
+    expect(
+      JSON.parse(readFileSync(join(clone, 'packages/app/package.json'), 'utf8'))
+        .dependencies.lib,
+    ).toBe('1.0.0');
+
+    f.npm('app', '1.0.0', { dependencies: { lib: '^1.0.0' } });
+    f.change('fix: select an explicit registry requirement');
+    const edited = f.run(settings, f.clone('main', 'edited'));
+    expect(edited.ok, edited.logs).toBe(true);
+    expect((await publishedManifest('1.0.3')).dependencies.lib).toBe('^1.0.0');
   });
 
   test('fresh-clone retries preserve exact package plans while changed plans are rejected', () => {
