@@ -11,7 +11,7 @@ setup and contributions, see [CONTRIBUTING.md](https://github.com/enkhjile/seman
 ## Setup
 
 Requirements for a consumer repository:
-- Node.js **24.0.0 or newer** and **semantic-release 25** (`^25.0.9`).
+- Node.js **24.11.0 or newer** and **semantic-release 25** (`^25.0.9`).
 - Git with full repository history, a clean checkout, and release commands run
   from the repository root. Running from a package directory is rejected.
 - Permission to push tags, Git notes, and `refs/semantic-release-workspace/*` to

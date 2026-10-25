@@ -274,6 +274,9 @@ importers:
       node:
         specifier: runtime:24.17.0
         version: runtime:24.17.0
+      npm:
+        specifier: 11.21.1
+        version: 11.21.1
       semantic-release:
         specifier: 25.0.9
         version: 25.0.9(supports-color@7.2.0)(typescript@7.0.2)

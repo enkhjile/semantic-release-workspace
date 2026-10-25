@@ -14,6 +14,7 @@ import type {
 } from './workspace-types.js';
 
 type Projection = (
+  owner: string,
   manifestPath: string,
   field: string[],
   value: string | null,
@@ -118,7 +119,13 @@ function npmEdges(
         continue;
       }
       spec =
-        project(manifestPath, field, rawSpec, packageId(target)) ?? rawSpec;
+        project(
+          packageId(pkg),
+          manifestPath,
+          field,
+          rawSpec,
+          packageId(target),
+        ) ?? rawSpec;
       range =
         protocol === 'workspace'
           ? spec.slice(alias ? `workspace:${target.name}@`.length : 10)
@@ -216,6 +223,7 @@ function cargoEdges(
           dependencyError(`Invalid Cargo dependency version: ${name}`);
         const source = typeof value.version === 'string' ? value.version : null;
         const spec = project(
+          packageId(pkg),
           manifestPath,
           [...field, 'version'],
           source,
@@ -324,7 +332,7 @@ export function coordinateDependencies(
   ) => (current ? inc(current, type) : '1.0.0'),
 ): { groups: string[][]; dependencyRanges: DependencyUpdate[] } {
   const byId = new Map(packages.map((pkg) => [pkg.id, pkg]));
-  const applied = new Map<string, DependencyUpdate>();
+  const applied: { owner: string; update: DependencyUpdate }[] = [];
   const key = (manifestPath: string, field: string[]) =>
     JSON.stringify([manifestPath, field]);
   const prior = new Map(
@@ -333,7 +341,13 @@ export function coordinateDependencies(
       entry,
     ]),
   );
-  const project: Projection = (manifestPath, field, value, dependency) => {
+  const project: Projection = (
+    owner,
+    manifestPath,
+    field,
+    value,
+    dependency,
+  ) => {
     const identity = key(manifestPath, field);
     const previous = prior.get(identity);
     if (
@@ -341,7 +355,7 @@ export function coordinateDependencies(
       previous.from === value &&
       previous.dependency === dependency
     ) {
-      applied.set(identity, previous);
+      applied.push({ owner, update: previous });
       return previous.to;
     }
     return value;
@@ -368,15 +382,13 @@ export function coordinateDependencies(
       }
     }
   }
-  // Carry still-unapplied changes into the plan, even when their target is unchanged.
+  // Retain matched projections even when their ranges become external.
   // This makes every persisted projection reviewable against the completed plan.
   const retained = new Map<string, DependencyUpdate>();
-  for (const edge of edges) {
-    const identity = key(edge.manifestPath, edge.field);
-    const previous = applied.get(identity);
-    const owner = byId.get(edge.owner);
+  for (const { owner: ownerId, update: previous } of applied) {
+    const identity = key(previous.manifestPath, previous.field);
+    const owner = byId.get(ownerId);
     if (
-      previous &&
       owner &&
       !owner.dependencyUpdates.some(
         (entry) => key(entry.manifestPath, entry.field) === identity,

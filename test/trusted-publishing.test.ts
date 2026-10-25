@@ -324,6 +324,87 @@ test('same-origin identity-exchange redirects are rejected before forwarding the
 });
 const jwt = (claims: Record<string, unknown>) =>
   `${Buffer.from('{"alg":"RS256"}').toString('base64url')}.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.fixture-signature`;
+test('automatic npm OIDC rejects a public-registry identity before sending it to an override', async () => {
+  const { repo, service } = await setup();
+  const selected = await registry();
+  selected.trusted();
+  const result = repo.run({
+    env: {
+      ...selected.env,
+      GITLAB_CI: 'true',
+      CI_COMMIT_BRANCH: 'main',
+      CI_COMMIT_REF_NAME: 'main',
+      NPM_ID_TOKEN: jwt({ aud: 'npm:registry.npmjs.org' }),
+    },
+    pluginConfig: {
+      publish: true,
+      npm: { registry: selected.url, provenance: false },
+    },
+  });
+  expect(result.ok, result.logs).toBe(false);
+  expect(result.codes).toContain('EWORKSPACEOIDC');
+  expect(
+    selected
+      .state()
+      .requests.some((call: { path: string }) =>
+        call.path.startsWith('/-/npm/v1/oidc/token/exchange/'),
+      ),
+  ).toBe(false);
+  expect(selected.state().uploads).toEqual([]);
+  expect(service.state().requests).toEqual([]);
+});
+test.each([
+  ['malformed JWT', 'not-a-jwt'],
+  ['missing audience', jwt({})],
+])(
+  'npm rejects a supplied identity with %s before exchange',
+  async (_label, token) => {
+    const { repo, service } = await setup();
+    const result = repo.run({
+      env: {
+        ...service.env,
+        CIRCLECI: 'true',
+        CIRCLE_BRANCH: 'main',
+        NPM_ID_TOKEN: token,
+      },
+      pluginConfig: {
+        publish: true,
+        npm: { registry: service.url, provenance: false },
+      },
+    });
+    expect(result.ok, result.logs).toBe(false);
+    expect(result.codes).toContain('EWORKSPACEOIDC');
+    expect(
+      service
+        .state()
+        .requests.some((call: { path: string }) =>
+          call.path.startsWith('/-/npm/v1/oidc/token/exchange/'),
+        ),
+    ).toBe(false);
+    expect(service.state().uploads).toEqual([]);
+  },
+);
+test('automatic npm OIDC accepts a matching audience within a supplied identity array', async () => {
+  const { repo, service } = await setup();
+  const result = repo.run({
+    env: {
+      ...service.env,
+      GITLAB_CI: 'true',
+      CI_COMMIT_BRANCH: 'main',
+      CI_COMMIT_REF_NAME: 'main',
+      NPM_ID_TOKEN: jwt({
+        aud: ['npm:registry.npmjs.org', 'npm:127.0.0.1'],
+      }),
+    },
+    pluginConfig: {
+      publish: true,
+      npm: { registry: service.url, provenance: false },
+    },
+  });
+  expect(result.ok, result.logs).toBe(true);
+  expect(service.state().exchanges).toHaveLength(1);
+  expect(service.state().uploads).toHaveLength(1);
+});
 test('GitLab publishes npm OIDC plus signed provenance with real semantic-release', async () => {
   const { repo, service, settings, signing } = await signedSetup();
   const claims = {

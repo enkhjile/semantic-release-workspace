@@ -14,7 +14,7 @@ pnpm install --frozen-lockfile
 pnpm check
 ```
 
-The published package supports **Node.js 24.0.0 and newer**, as declared by
+The published package supports **Node.js 24.11.0 and newer**, as declared by
 `engines.node` in [package.json](package.json). That file is also the source of
 truth for the exact development Node version (`devEngines.runtime`) and pnpm
 version (`packageManager`); do not maintain separate version pins in this guide.
@@ -88,15 +88,21 @@ The checkout version is a development placeholder: publishing writes release
 versions and records them in tags and GitHub release notes, without committing
 generated version changes back to `main`.
 
-The [GitHub Actions workflow](.github/workflows/ci.yml) verifies the manifest's
-development Node version and latest stable Node. Pushes to `main` and `alpha`
-trigger verification and release; the release job runs only after both checks
-pass, and never for pull requests. Manual workflow runs release only on those
+The [GitHub Actions workflow](.github/workflows/ci.yml) verifies the minimum Node
+version from `engines.node`, the development version from `devEngines.runtime`,
+and latest stable Node. Pushes to `main` and `alpha` trigger verification and
+release; the release job runs only after all verification checks pass, and never
+for pull requests. Manual workflow runs release only on those
 branches. `main` publishes stable versions to npm's `latest` tag; `alpha`
 publishes versions such as `1.0.0-alpha.1` to `alpha` and creates GitHub prereleases.
 Merge ready alpha work into `main`; semantic-release derives the stable version
 from commits and release history. Users can install prereleases with
 `npm install semantic-release-workspace@alpha`.
+
+The npm CLI is pinned as a direct development dependency so semantic-release
+uses the project's OIDC-capable client. pnpm/setup installs Node without npm;
+relying on the runner's global npm can select an older client without OIDC
+support and fail publishing with `ENEEDAUTH`.
 
 The GitHub plugin keeps releases enabled while limiting issue/PR automation:
 
