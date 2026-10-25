@@ -77,8 +77,14 @@ async function cargoConfiguration(context: VerifyConditionsContext) {
   );
   const registries = {
     ...(record(global.registries) ? global.registries : {}),
-    ...(record(local.registries) ? local.registries : {}),
   };
+  for (const [name, entry] of Object.entries(
+    record(local.registries) ? local.registries : {},
+  )) {
+    const previous = registries[name];
+    registries[name] =
+      record(previous) && record(entry) ? { ...previous, ...entry } : entry;
+  }
   return { home, global, local, registries };
 }
 export async function destination(
@@ -161,11 +167,13 @@ export async function destination(
       'EWORKSPACECONFIG',
     );
   const configuration = await cargoConfiguration(context);
-  const defaultRegistry = record(configuration.local.registry)
-    ? configuration.local.registry.default
-    : record(configuration.global.registry)
+  const defaultRegistry =
+    (record(configuration.local.registry)
+      ? configuration.local.registry.default
+      : undefined) ??
+    (record(configuration.global.registry)
       ? configuration.global.registry.default
-      : undefined;
+      : undefined);
   const name =
     options.registry ??
     context.env?.CARGO_REGISTRY_DEFAULT ??
