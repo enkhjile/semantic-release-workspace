@@ -109,13 +109,33 @@ export async function createVersionPlan(
           candidate.head === version.head,
       ),
     );
-    for (const update of carrier?.planning?.plan.packages.find(
+    const previousPackage = carrier?.planning?.plan.packages.find(
       (pkg) => pkg.id === version.id,
-    )?.dependencyUpdates ?? [])
+    );
+    if (!previousPackage) continue;
+    const currentPackage = inventory.packages.find(
+      (pkg) => packageId(pkg) === version.id,
+    );
+    const file =
+      previousPackage.ecosystem === 'npm' ? 'package.json' : 'Cargo.toml';
+    const previousManifest = `${previousPackage.path === '.' ? '' : `${previousPackage.path}/`}${file}`;
+    for (const update of previousPackage.dependencyUpdates) {
+      // Only package-owned fields follow a move. Shared Cargo workspace
+      // dependencies remain in the root manifest, even for a former root crate.
+      const projection =
+        currentPackage &&
+        update.manifestPath === previousManifest &&
+        update.field[0] !== 'workspace'
+          ? {
+              ...update,
+              manifestPath: `${currentPackage.path === '.' ? '' : `${currentPackage.path}/`}${file}`,
+            }
+          : update;
       projections.set(
-        JSON.stringify([update.manifestPath, update.field]),
-        update,
+        JSON.stringify([projection.manifestPath, projection.field]),
+        projection,
       );
+    }
   }
   const packages: PackagePlan[] = [];
   const baselines: {
