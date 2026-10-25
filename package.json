@@ -31,7 +31,7 @@
     "prepack": "pnpm build",
     "release": "semantic-release",
     "release:dry-run": "semantic-release --dry-run",
-    "test": "pnpm build && vitest run --maxWorkers=2",
+    "test": "pnpm build && vitest run --maxWorkers=4",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
