@@ -31,7 +31,7 @@ toolchain. See the [Rust installation guide](https://www.rust-lang.org/tools/ins
 | Command          | Purpose                                                    |
 | ---------------- | ---------------------------------------------------------- |
 | `pnpm check`     | Run lint, strict type checking, then the build and tests.  |
-| `pnpm test`      | Build, then run the test suite with two workers.           |
+| `pnpm test`      | Build, then run the test suite with four workers.          |
 | `pnpm build`     | Compile the ESM entry point and declarations into `dist/`. |
 | `pnpm lint`      | Check formatting and lint rules with Biome.                |
 | `pnpm format`    | Apply formatting and safe lint fixes; review the result.   |
@@ -43,19 +43,23 @@ package from `dist/`, then call Vitest directly:
 
 ```sh
 pnpm build
-pnpm exec vitest run test/coordination.test.ts --maxWorkers=2
-pnpm exec vitest run test/publication.test.ts --maxWorkers=2 -t 'dry run'
+pnpm exec vitest run test/coordination.test.ts --maxWorkers=4
+pnpm exec vitest run test/publication.test.ts --maxWorkers=4 -t 'dry run'
 ```
 
 Use Vitest's file arguments and `-t` name filter. Do not use `pnpm test --filter`
 to select tests: `pnpm test` runs a compound build-and-test script. Keep the
-two-worker limit; integration cases launch several real release and packaging
-processes each.
+four-worker limit used by CI; integration cases launch several real release and
+packaging processes each. Use fewer workers when local resources are limited.
 
 Tests use disposable Git repositories and remotes, local npm/Cargo registries,
 mutual TLS, and local Sigstore/TUF fixtures. They require no real publishing
 credentials and make no public registry writes. Keep new test fixtures local and
 avoid scripts with external side effects.
+
+Reproduce release regressions through real `semantic-release` runs. Check the
+published artifact as well as the plan when manifests change, and cover dry-run
+side effects and fresh-clone recovery when release state is involved.
 
 ## Make a reviewable change
 

@@ -367,9 +367,9 @@ function npmArtifactManifest(
       const update = pkg.dependencyUpdates.find(
         (entry) => entry.field[0] === section && entry.field[1] === name,
       );
-      range =
-        update?.publishedRange ??
-        (alias ? `npm:${target.name}@${range}` : range);
+      range = update?.publishedRange ?? range;
+      if ((alias || name !== target.name) && !range.startsWith('npm:'))
+        range = `npm:${target.name}@${range}`;
       edits.push({ field: [section, name], value: range });
     }
   }

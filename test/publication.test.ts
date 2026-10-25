@@ -416,7 +416,7 @@ test('npm workspace aliases and local dependencies are converted only in the art
   const manifest = JSON.parse(await archiveFile(bytes, 'package/package.json'));
   expect(manifest.dependencies).toEqual({
     alias: 'npm:publication-fixture@^1.1.0',
-    local: '1.1.0',
+    local: 'npm:publication-fixture@1.1.0',
   });
   expect(
     repo.git(
