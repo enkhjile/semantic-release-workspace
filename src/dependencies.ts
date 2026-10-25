@@ -264,7 +264,6 @@ function update(edge: Edge, target: PackagePlan): DependencyUpdate | undefined {
     const shorthand = ['*', '^', '~'].includes(raw) || raw.startsWith('.');
     to = shorthand ? (edge.spec ?? version) : `${prefix}${symbol}${version}`;
     publishedRange = `${symbol}${version}`;
-    if (edge.alias) publishedRange = `npm:${target.name}@${publishedRange}`;
   } else if (edge.protocol === 'local' && edge.ecosystem === 'npm')
     to = edge.spec ?? version;
   else {
@@ -272,6 +271,8 @@ function update(edge: Edge, target: PackagePlan): DependencyUpdate | undefined {
     to = `${operator}${version}`;
     publishedRange = to;
   }
+  if (edge.ecosystem === 'npm' && (edge.alias || edge.field[1] !== target.name))
+    publishedRange = `npm:${target.name}@${publishedRange}`;
   return {
     dependency: edge.target,
     manifestPath: edge.manifestPath,
