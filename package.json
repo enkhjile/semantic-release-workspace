@@ -2,69 +2,37 @@
   "name": "semantic-release-workspace",
   "version": "0.0.0-development",
   "description": "Workspace-aware monorepo releases for semantic-release.",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/enkhjile/semantic-release-workspace.git"
-  },
   "homepage": "https://github.com/enkhjile/semantic-release-workspace#readme",
   "bugs": {
     "url": "https://github.com/enkhjile/semantic-release-workspace/issues"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enkhjile/semantic-release-workspace.git"
+  },
+  "license": "MIT",
+  "sideEffects": false,
   "type": "module",
-  "engines": {
-    "node": ">=24.11.0"
-  },
-  "devEngines": {
-    "runtime": {
-      "name": "node",
-      "version": "24.17.0",
-      "onFail": "download"
-    }
-  },
-  "packageManager": "pnpm@12.15.0",
-  "types": "./dist/index.d.mts",
   "exports": {
     ".": {
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs"
     }
   },
+  "types": "./dist/index.d.mts",
   "files": [
     "dist"
   ],
-  "sideEffects": false,
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
     "build": "tsdown",
-    "test": "pnpm build && vitest run --maxWorkers=2",
-    "lint": "biome check .",
-    "format": "biome check --write .",
-    "typecheck": "tsc --noEmit",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "format": "biome check --write .",
+    "lint": "biome check .",
     "prepack": "pnpm build",
     "release": "semantic-release",
-    "release:dry-run": "semantic-release --dry-run"
-  },
-  "peerDependencies": {
-    "semantic-release": "^25.0.9"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "2.6.2",
-    "@semantic-release/github": "12.0.10",
-    "@semantic-release/npm": "13.2.0",
-    "@sigstore/mock": "0.12.1",
-    "@tufjs/repo-mock": "4.0.1",
-    "@types/node": "24.19.2",
-    "@types/semver": "7.8.0",
-    "npm": "11.21.1",
-    "semantic-release": "25.0.9",
-    "tsdown": "0.23.1",
-    "typescript": "7.0.2",
-    "vite": "8.3.5",
-    "vitest": "5.0.5"
+    "release:dry-run": "semantic-release --dry-run",
+    "test": "pnpm build && vitest run --maxWorkers=2",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@npmcli/agent": "4.0.2",
@@ -81,5 +49,37 @@
     "tar": "7.5.22",
     "toml-eslint-parser": "1.0.3",
     "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.2",
+    "@semantic-release/github": "12.0.10",
+    "@semantic-release/npm": "13.2.0",
+    "@sigstore/mock": "0.12.1",
+    "@tufjs/repo-mock": "4.0.1",
+    "@types/node": "24.19.2",
+    "@types/semver": "7.8.0",
+    "npm": "11.21.1",
+    "semantic-release": "25.0.9",
+    "tsdown": "0.23.1",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  },
+  "peerDependencies": {
+    "semantic-release": "^25.0.9"
+  },
+  "packageManager": "pnpm@12.15.0",
+  "engines": {
+    "node": ">=24.11.0"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "24.17.0",
+      "onFail": "download"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
