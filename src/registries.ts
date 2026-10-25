@@ -15,7 +15,7 @@ import { archiveFile } from './archive.js';
 import { npmChannel, releaseRoute } from './branches.js';
 import { cargoPolicy, cargoUserAgent } from './cargo-identity.js';
 import { git } from './journal.js';
-import { editManifest } from './manifests.js';
+import { type Edit, editManifest } from './manifests.js';
 import { serviceURL } from './npm-identity.js';
 import { createProvenance } from './npm-provenance.js';
 import {
@@ -316,12 +316,10 @@ function npmArtifactManifest(
   dest: Destination,
 ): string {
   const value = JSON.parse(source) as Record<string, unknown>;
-  const edits: { field: string[]; value: string }[] = [
+  const edits: Edit[] = [
     { field: ['publishConfig', 'registry'], value: dest.registry },
     { field: ['publishConfig', 'tag'], value: dest.tag ?? 'latest' },
-    ...(dest.access
-      ? [{ field: ['publishConfig', 'access'], value: dest.access }]
-      : []),
+    { field: ['publishConfig', 'access'], value: dest.access ?? null },
   ];
   for (const section of [
     'dependencies',
