@@ -697,6 +697,11 @@ then releases from `main` or `alpha` only after all
 verification jobs pass. The package uses standard semantic-release plugins for
 its own releases, avoiding a dependency on its unfinished workspace behavior.
 
+The npm CLI is pinned as a direct development dependency so semantic-release
+uses the project's OIDC-capable client. pnpm/setup installs Node without npm;
+relying on the runner's global npm can select an older client without OIDC
+support and fail publishing with `ENEEDAUTH`.
+
 `main` publishes stable versions to npm's `latest` tag. The `alpha` branch
 publishes prereleases such as `1.0.0-alpha.1` to the `alpha` tag and marks their
 GitHub releases as prereleases. Install them with

@@ -59,6 +59,7 @@
     "@tufjs/repo-mock": "4.0.1",
     "@types/node": "24.19.2",
     "@types/semver": "7.8.0",
+    "npm": "11.21.1",
     "semantic-release": "25.0.9",
     "tsdown": "0.23.1",
     "typescript": "7.0.2",
