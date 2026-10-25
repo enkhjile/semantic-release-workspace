@@ -215,8 +215,81 @@ test('Cargo exchange rejects same-origin redirects before sending identity again
       .requests.some((call: { path: string }) => call.path === '/capture'),
   ).toBe(false);
 });
-const jwt = (aud: string) =>
+const jwt = (aud?: string | string[]) =>
   `${Buffer.from('{"alg":"RS256"}').toString('base64url')}.${Buffer.from(JSON.stringify({ aud, iss: 'https://gitlab.com', jti: 'gitlab-single-use' })).toString('base64url')}.fixture-signature`;
+test('automatic Cargo OIDC rejects a crates.io identity before sending it to an alternate API', async () => {
+  const { repo, service } = await setup();
+  const result = repo.run({
+    env: {
+      ...service.env,
+      GITLAB_CI: 'true',
+      CI_COMMIT_BRANCH: 'main',
+      CI_COMMIT_REF_NAME: 'main',
+      CRATES_IO_ID_TOKEN: jwt('crates.io'),
+    },
+    pluginConfig: { publish: true, cargo: { registry: 'fixture' } },
+  });
+  expect(result.codes).toContain('EWORKSPACEOIDC');
+  expect(
+    service
+      .state()
+      .requests.some((call: { path: string }) =>
+        call.path.endsWith('/trusted_publishing/tokens'),
+      ),
+  ).toBe(false);
+  expect(service.state().cargoExchanges ?? []).toEqual([]);
+  expect(service.state().cargoRevocations ?? []).toEqual([]);
+  expect(service.state().uploads).toEqual([]);
+});
+test.each([
+  ['malformed JWT', 'not-a-jwt'],
+  ['missing audience', jwt()],
+])(
+  'Cargo rejects a supplied identity with %s before exchange',
+  async (_label, token) => {
+    const { repo, service } = await setup();
+    const result = repo.run({
+      env: {
+        ...service.env,
+        GITLAB_CI: 'true',
+        CI_COMMIT_BRANCH: 'main',
+        CI_COMMIT_REF_NAME: 'main',
+        CRATES_IO_ID_TOKEN: token,
+      },
+      pluginConfig: { publish: true, cargo: { registry: 'fixture' } },
+    });
+    expect(result.codes).toContain('EWORKSPACEOIDC');
+    expect(
+      service
+        .state()
+        .requests.some((call: { path: string }) =>
+          call.path.endsWith('/trusted_publishing/tokens'),
+        ),
+    ).toBe(false);
+    expect(service.state().cargoRevocations ?? []).toEqual([]);
+    expect(service.state().uploads).toEqual([]);
+  },
+);
+test('automatic Cargo OIDC accepts a matching API audience within a supplied identity array', async () => {
+  const { repo, service } = await setup();
+  const result = repo.run({
+    env: {
+      ...service.env,
+      GITLAB_CI: 'true',
+      CI_COMMIT_BRANCH: 'main',
+      CI_COMMIT_REF_NAME: 'main',
+      CRATES_IO_ID_TOKEN: jwt([
+        'crates.io',
+        `${service.url.replace(/^https?:\/\//, '')}/cargo`,
+      ]),
+    },
+    pluginConfig: { publish: true, cargo: { registry: 'fixture' } },
+  });
+  expect(result.ok, result.logs).toBe(true);
+  expect(service.state().cargoExchanges).toHaveLength(1);
+  expect(service.state().cargoExchanges[0].revoked).toBe(true);
+  expect(service.state().uploads).toHaveLength(1);
+});
 test('GitLab Cargo OIDC exchanges a single-use CRATES_IO_ID_TOKEN once across dependent crates', async () => {
   const { repo, service, settings } = await setup(true);
   const result = repo.run({

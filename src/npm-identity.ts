@@ -45,13 +45,40 @@ export function serviceURL(value: unknown): string {
     );
   }
 }
+// Check routing before disclosing supplied identities; registries verify signatures.
+export function identityForAudience(token: string, audience: string): string {
+  try {
+    const parts = token.split('.');
+    const claims: unknown = JSON.parse(
+      Buffer.from(parts[1] ?? '', 'base64url').toString('utf8'),
+    );
+    if (
+      parts.length !== 3 ||
+      !parts.every(Boolean) ||
+      !record(claims) ||
+      !(
+        claims.aud === audience ||
+        (Array.isArray(claims.aud) &&
+          claims.aud.every((value) => typeof value === 'string') &&
+          claims.aud.includes(audience))
+      )
+    )
+      throw new Error();
+    return token;
+  } catch {
+    return releaseError(
+      'The supplied CI identity must match the destination audience. Check the ID token audience configuration.',
+      'EWORKSPACEOIDC',
+    );
+  }
+}
 export async function identityToken(
   env: NodeJS.ProcessEnv,
   audience: string,
 ): Promise<string> {
   try {
     if (audience.startsWith('npm:') && env.NPM_ID_TOKEN && ciProvider(env))
-      return env.NPM_ID_TOKEN;
+      return identityForAudience(env.NPM_ID_TOKEN, audience);
     if (
       audience === 'sigstore' &&
       env.SIGSTORE_ID_TOKEN &&
