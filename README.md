@@ -522,7 +522,7 @@ URLs are frozen with each pending batch; changing them blocks retry. URLs requir
 HTTPS, except loopback HTTP for local integration testing. The default trust root
 uses Sigstore's signed TUF repository. Signing requires outbound HTTPS and an
 available local loopback socket for the redirect-guarded SDK transport. Runtime
-Sigstore 4.1.1 is the newest stable SDK supporting the Node 24.0.0 floor; newer major
+Sigstore 4.1.1 is the newest stable SDK supporting the Node 24.11.0 floor; newer major
 versions require a later Node 24 patch.
 
 Cargo supports crates.io and named HTTP sparse registries configured in
@@ -636,8 +636,9 @@ or real credentials are used.
 
 ## Development
 
-The published package targets Node.js **24.0.0 and newer**, declared in
-`package.json` under `engines.node`. Development and publishing use the exact
+The published package targets Node.js **24.11.0 and newer**, declared in
+`package.json` under `engines.node`. This supports semantic-release 25 and the
+current build toolchain. Development and publishing use the exact
 Node.js version pinned in `devEngines.runtime` in that same file. `pnpm install`
 downloads the runtime and records its version and checksum in `pnpm-lock.yaml`;
 project scripts use it automatically.
@@ -660,7 +661,7 @@ Commands:
 - `pnpm release:dry-run`: preview the next release in a configured repository.
 
 Development tools use exact stable versions resolved from npm on 2026-10-23.
-The npm runtime clients use the newest stable releases compatible with Node 24.0
+The npm runtime clients use the newest stable releases compatible with Node 24.11
 (config 10.14.0, registry-fetch 19.1.1, libnpmpublish 11.2.1, agent 4.0.2);
 their newer major versions require Node 24.15 or newer.
 Node typings track the latest Node 24 release to avoid using newer runtime APIs.
@@ -690,10 +691,16 @@ The version in the checkout is a development placeholder. Release versions are
 written during publishing and recorded in Git tags and GitHub release notes;
 generated version changes are not committed back to `main`.
 
-The GitHub Actions workflow verifies the manifest-declared Node version and the
-latest stable Node, then releases from `main` or `alpha` only after both
+The GitHub Actions workflow verifies the minimum Node version from `engines.node`,
+the development version from `devEngines.runtime`, and the latest stable Node,
+then releases from `main` or `alpha` only after all
 verification jobs pass. The package uses standard semantic-release plugins for
 its own releases, avoiding a dependency on its unfinished workspace behavior.
+
+The npm CLI is pinned as a direct development dependency so semantic-release
+uses the project's OIDC-capable client. pnpm/setup installs Node without npm;
+relying on the runner's global npm can select an older client without OIDC
+support and fail publishing with `ENEEDAUTH`.
 
 `main` publishes stable versions to npm's `latest` tag. The `alpha` branch
 publishes prereleases such as `1.0.0-alpha.1` to the `alpha` tag and marks their

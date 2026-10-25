@@ -1,7 +1,7 @@
 import type { VerifyConditionsContext } from 'semantic-release';
 import { createCargoIdentity, hasCargoIdentity } from './cargo-identity.js';
 import { discoverWorkspaces } from './discovery.js';
-import { git, snapshot, writeJournal } from './journal.js';
+import { git, gitOutput, snapshot, writeJournal } from './journal.js';
 import {
   applyManifests,
   type ManifestChange,
@@ -514,7 +514,14 @@ export async function recoverManifests(
       'EWORKSPACEARTIFACT',
     );
   const paths = (
-    await git(context, 'diff', '--name-only', '-z', current.head, prepared)
+    await gitOutput(
+      context,
+      'diff',
+      '--name-only',
+      '-z',
+      current.head,
+      prepared,
+    )
   )
     .split('\0')
     .filter(Boolean);

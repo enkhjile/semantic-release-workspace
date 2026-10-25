@@ -150,10 +150,18 @@ const handler = async (req, res) => {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const { jwt } = JSON.parse(Buffer.concat(chunks));
-    const claims = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url'));
+    let claims;
+    try {
+      claims = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url'));
+    } catch {
+      return json({}, 401);
+    }
     const audience = `${base.replace(/^https?:\/\//, '')}/cargo`;
     if (
-      claims.aud !== audience ||
+      !(
+        claims?.aud === audience ||
+        (Array.isArray(claims?.aud) && claims.aud.includes(audience))
+      ) ||
       req.headers.authorization ||
       !req.headers['user-agent']?.includes('semantic-release-workspace')
     )

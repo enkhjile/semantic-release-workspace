@@ -18,7 +18,7 @@ import { record } from './workspace-files.js';
 
 export interface Edit {
   field: string[];
-  value: string;
+  value: string | null;
 }
 const equal = (a: string[], b: string[]) =>
   JSON.stringify(a) === JSON.stringify(b);
