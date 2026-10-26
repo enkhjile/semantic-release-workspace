@@ -35,9 +35,11 @@ async function setup(
   previousRegistry = false,
   customIndex = false,
   sourceLocation: SourceLocation = 'home',
+  crossRegistry = false,
 ) {
   const repo = fixture();
   const service = await registry();
+  const selected = crossRegistry ? await registry() : service;
   mkdirSync(service.env.CARGO_HOME, { recursive: true });
   const sourceConfig = `[source.crates-io]\nreplace-with = "fixture-source"\n[source.fixture-source]\nregistry = "sparse+${service.url}/cargo/index/"\n`;
   const directSourceConfig = `[source.crates-io]\nregistry = "sparse+${service.url}/cargo/index/"\n`;
@@ -56,7 +58,10 @@ async function setup(
             : sourceLocation === 'candidate-chain-local'
               ? candidateChainSourceConfig
               : undefined;
-  const cargoConfig = `${sourceLocation === 'home' ? sourceConfig : ''}${previousRegistry ? `[registries.previous]\nindex = "sparse+${service.url}/cargo/index/"\n` : ''}${customIndex ? `[registries.crates-io]\nindex = "sparse+${service.url}/cargo/index/"\n` : ''}`;
+  const namedRegistry = crossRegistry
+    ? `[registries.fixture]\nindex = "sparse+${service.url}/cargo/index/"\n`
+    : '';
+  const cargoConfig = `${sourceLocation === 'home' ? sourceConfig : ''}${previousRegistry ? `[registries.previous]\nindex = "sparse+${service.url}/cargo/index/"\n` : ''}${customIndex ? `[registries.crates-io]\nindex = "sparse+${selected.url}/cargo/index/"\n` : ''}`;
   // Ordinary cases leave [registries.crates-io] undefined. The custom-index
   // case defines it explicitly and verifies that the archive retains its index.
   writeFileSync(join(service.env.CARGO_HOME, 'config.toml'), cargoConfig);
@@ -66,9 +71,11 @@ async function setup(
     'crates/core/Cargo.toml':
       '[package]\nname = "default-registry-core"\nversion = "1.0.0"\nedition = "2024"\nlicense = "MIT"\ndescription = "Default registry fixture"\n',
     'crates/core/src/lib.rs': 'pub fn value() -> u32 { 42 }\n',
-    'crates/adapter/Cargo.toml': `[package]\nname = "default-registry-adapter"\nversion = "1.0.0"\nedition = "2024"\nlicense = "MIT"\ndescription = "Default registry fixture"\n\n[dependencies]\nrenamed = { package = "default-registry-core", path = "../core", version = "=1.0.0"${previousRegistry ? ', registry = "previous"' : ''} }\n`,
+    'crates/adapter/Cargo.toml': `[package]\nname = "default-registry-adapter"\nversion = "1.0.0"\nedition = "2024"\nlicense = "MIT"\ndescription = "Default registry fixture"\n${crossRegistry ? 'publish = ["fixture"]\n' : ''}\n[dependencies]\nrenamed = { package = "default-registry-core", path = "../core", version = "=1.0.0"${previousRegistry ? ', registry = "previous"' : ''} }\n`,
     'crates/adapter/src/lib.rs': 'pub fn value() -> u32 { renamed::value() }\n',
-    ...(localSourceConfig ? { '.cargo/config.toml': localSourceConfig } : {}),
+    ...(localSourceConfig || namedRegistry
+      ? { '.cargo/config.toml': `${localSourceConfig ?? ''}${namedRegistry}` }
+      : {}),
   };
   for (const [file, contents] of Object.entries(files)) {
     mkdirSync(join(repo.cwd, file, '..'), { recursive: true });
@@ -99,7 +106,7 @@ globalThis.fetch = (input, init) => {
   const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);
   if (url.origin === 'https://index.crates.io')
     return nativeFetch(${JSON.stringify(`${service.url}/cargo/index`)} + url.pathname + url.search, init);
-  if (url.origin !== ${JSON.stringify(service.url)})
+  if (url.origin !== ${JSON.stringify(service.url)} && url.origin !== ${JSON.stringify(selected.url)})
     throw new Error('Unexpected external request in Cargo fixture: ' + url.origin);
   return nativeFetch(input, init);
 };\n`,
@@ -182,7 +189,15 @@ exec ${shell(cargo)} "$@"
       }),
     };
   };
-  return { repo, service, run, runWithEmptyPackageHome, unchanged, files };
+  return {
+    repo,
+    service,
+    selected,
+    run,
+    runWithEmptyPackageHome,
+    unchanged,
+    files,
+  };
 }
 
 async function dependencyManifest(
@@ -345,6 +360,63 @@ test.each([
     unchanged();
   },
 );
+
+test('Cargo packages a named-registry crate with a staged custom crates-io dependency', async () => {
+  const { repo, service, selected, runWithEmptyPackageHome, unchanged } =
+    await setup(false, true, 'none', true);
+  const { emptyHome, trace, released } = runWithEmptyPackageHome();
+  expect(
+    released.ok,
+    `${released.logs}\n${existsSync(trace) ? readFileSync(trace, 'utf8') : ''}`,
+  ).toBe(true);
+  expect(selected.state().uploads).toEqual([
+    'cargo:default-registry-core@1.1.0',
+  ]);
+  expect(service.state().uploads).toEqual([
+    'cargo:default-registry-adapter@1.1.0',
+  ]);
+  expect((await dependencyManifest(service)).dependencies).toEqual({
+    renamed: {
+      package: 'default-registry-core',
+      version: '=1.1.0',
+      'registry-index': `sparse+${selected.url}/cargo/index/`,
+    },
+  });
+  expect(repo.state().execution.packages).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: 'cargo:default-registry-core',
+        destination: expect.objectContaining({
+          registry: 'crates-io',
+          index: `${selected.url}/cargo/index/`,
+        }),
+      }),
+      expect.objectContaining({
+        id: 'cargo:default-registry-adapter',
+        destination: expect.objectContaining({ registry: 'fixture' }),
+      }),
+    ]),
+  );
+  expect(existsSync(join(emptyHome, 'config.toml'))).toBe(false);
+  unchanged();
+});
+
+test('Cargo rejects a conflicting custom crates-io source before cross-registry uploads', async () => {
+  const { service, selected, runWithEmptyPackageHome, unchanged } = await setup(
+    false,
+    true,
+    'chained-local',
+    true,
+  );
+  const { released } = runWithEmptyPackageHome();
+  expect(released.ok).toBe(false);
+  expect(released.codes, released.logs).toContain('EWORKSPACECONFIG');
+  expect(service.state().requests).toEqual([]);
+  expect(selected.state().requests).toEqual([]);
+  expect(service.state().uploads).toEqual([]);
+  expect(selected.state().uploads).toEqual([]);
+  unchanged();
+});
 
 test('Cargo rejects a chained source that conflicts with the selected crates-io index', async () => {
   const { service, runWithEmptyPackageHome, unchanged } = await setup(

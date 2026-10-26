@@ -614,6 +614,25 @@ export async function pack(
   const source = join(directory, 'source');
   try {
     await stageSource(context, inventory.root, source, plan.head, true);
+    let stagedCratesIoIndex: string | undefined;
+    const routeStagedCratesIo = (target: Destination) => {
+      if (
+        target.ecosystem !== 'cargo' ||
+        target.registry !== 'crates-io' ||
+        target.index === undefined ||
+        target.index === 'https://index.crates.io/'
+      )
+        return;
+      if (
+        stagedCratesIoIndex !== undefined &&
+        stagedCratesIoIndex !== target.index
+      )
+        return releaseError(
+          'Staged Cargo dependencies select different crates-io indexes.',
+          'EWORKSPACECONFIG',
+        );
+      stagedCratesIoIndex = target.index;
+    };
     // Local path dependencies need a registry version even when this batch does not bump them.
     for (const path of new Set([
       'Cargo.toml',
@@ -663,6 +682,7 @@ export async function pack(
               config,
               target,
             );
+            routeStagedCratesIo(targetDestination);
             if (
               targetDestination.registry === 'crates-io' &&
               targetDestination.index === 'https://index.crates.io/'
@@ -698,10 +718,21 @@ export async function pack(
     // Explicit registry selection is also used for resolving staged internal dependencies.
     const customCratesIo =
       dest.registry === 'crates-io' &&
+      typeof dest.index === 'string' &&
       dest.index !== 'https://index.crates.io/';
-    const cargoIndex = `sparse+${dest.index}`;
+    if (
+      customCratesIo &&
+      stagedCratesIoIndex !== undefined &&
+      stagedCratesIoIndex !== dest.index
+    )
+      return releaseError(
+        'The Cargo package and its staged dependencies select different crates-io indexes.',
+        'EWORKSPACECONFIG',
+      );
+    const routeIndex = customCratesIo ? dest.index : stagedCratesIoIndex;
+    const cargoIndex = routeIndex ? `sparse+${routeIndex}` : undefined;
     let cargoConfig: string | undefined;
-    if (customCratesIo) {
+    if (cargoIndex) {
       const configuration = await cargoConfiguration(context);
       cargoConfig = join(directory, 'cargo-config.toml');
       await writeFile(
