@@ -68,6 +68,15 @@ async function toml(path: string): Promise<Record<string, unknown>> {
     );
   }
 }
+function mergeCargoEntries(global: unknown, local: unknown) {
+  const merged = { ...(record(global) ? global : {}) };
+  for (const [name, entry] of Object.entries(record(local) ? local : {})) {
+    const previous = merged[name];
+    merged[name] =
+      record(previous) && record(entry) ? { ...previous, ...entry } : entry;
+  }
+  return merged;
+}
 async function cargoConfiguration(context: VerifyConditionsContext) {
   const home =
     context.env?.CARGO_HOME ?? join(context.env?.HOME ?? homedir(), '.cargo');
@@ -75,26 +84,8 @@ async function cargoConfiguration(context: VerifyConditionsContext) {
   const local = await toml(
     join(context.cwd ?? process.cwd(), '.cargo/config.toml'),
   );
-  const registries = {
-    ...(record(global.registries) ? global.registries : {}),
-  };
-  for (const [name, entry] of Object.entries(
-    record(local.registries) ? local.registries : {},
-  )) {
-    const previous = registries[name];
-    registries[name] =
-      record(previous) && record(entry) ? { ...previous, ...entry } : entry;
-  }
-  const sources = {
-    ...(record(global.source) ? global.source : {}),
-  };
-  for (const [name, entry] of Object.entries(
-    record(local.source) ? local.source : {},
-  )) {
-    const previous = sources[name];
-    sources[name] =
-      record(previous) && record(entry) ? { ...previous, ...entry } : entry;
-  }
+  const registries = mergeCargoEntries(global.registries, local.registries);
+  const sources = mergeCargoEntries(global.source, local.source);
   return { home, global, local, registries, sources };
 }
 
