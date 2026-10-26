@@ -539,7 +539,12 @@ export async function pack(
               config,
               target,
             );
-            dep.registry = targetDestination.registry;
+            if (
+              targetDestination.registry === 'crates-io' &&
+              targetDestination.index === 'https://index.crates.io/'
+            )
+              delete dep.registry;
+            else dep.registry = targetDestination.registry;
             // Resolve the published dependency without loading an excluded local workspace member.
             delete dep.path;
             changed = true;
