@@ -38,6 +38,7 @@ test('a packed plugin loads by its documented name through real semantic-release
   repo.git(repo.cwd, 'add', '.');
   repo.commit('feat: add consumer package');
 
+  // The compatibility matrix intentionally differs from the development runtime pin.
   const packed = JSON.parse(
     execFileSync(
       process.execPath,
@@ -45,6 +46,7 @@ test('a packed plugin loads by its documented name through real semantic-release
         npm,
         'pack',
         '--ignore-scripts',
+        '--force',
         '--json',
         '--pack-destination',
         repo.remote,
