@@ -85,7 +85,128 @@ async function cargoConfiguration(context: VerifyConditionsContext) {
     registries[name] =
       record(previous) && record(entry) ? { ...previous, ...entry } : entry;
   }
-  return { home, global, local, registries };
+  const sources = {
+    ...(record(global.source) ? global.source : {}),
+  };
+  for (const [name, entry] of Object.entries(
+    record(local.source) ? local.source : {},
+  )) {
+    const previous = sources[name];
+    sources[name] =
+      record(previous) && record(entry) ? { ...previous, ...entry } : entry;
+  }
+  return { home, global, local, registries, sources };
+}
+
+type CargoSourceRoute = { names: string[]; index: string };
+
+function cargoSourceRoute(
+  sources: Record<string, unknown>,
+  name: string,
+  required = true,
+): CargoSourceRoute | undefined {
+  const names: string[] = [];
+  for (let current = name; ; ) {
+    if (names.includes(current))
+      return releaseError(
+        'Cargo source replacements must not form a cycle.',
+        'EWORKSPACECONFIG',
+      );
+    const entry = sources[current];
+    if (!record(entry)) {
+      if (!names.length || !required) return undefined;
+      return releaseError(
+        `Cargo source replacement ${names.at(-1)} is not configured.`,
+        'EWORKSPACECONFIG',
+      );
+    }
+    names.push(current);
+    const replacement = entry['replace-with'];
+    if (replacement !== undefined) {
+      if (typeof replacement !== 'string' || !replacement)
+        return releaseError(
+          `Cargo source replacement for ${current} is invalid.`,
+          'EWORKSPACECONFIG',
+        );
+      current = replacement;
+      continue;
+    }
+    if (
+      typeof entry.registry !== 'string' ||
+      !entry.registry.startsWith('sparse+')
+    )
+      return releaseError(
+        `Cargo source ${current} must resolve to a sparse registry.`,
+        'EWORKSPACECONFIG',
+      );
+    return { names, index: url(entry.registry.slice(7)) };
+  }
+}
+
+function cargoPackageConfig(
+  configuration: Awaited<ReturnType<typeof cargoConfiguration>>,
+  index: string,
+) {
+  const selected = url(index.slice(7));
+  const sources = configuration.sources;
+  const configured = cargoSourceRoute(sources, 'crates-io');
+  if (configured && configured.index !== selected)
+    return releaseError(
+      'Configured Cargo crates-io source does not resolve to the selected registry.',
+      'EWORKSPACECONFIG',
+    );
+
+  const localSources = record(configuration.local.source)
+    ? configuration.local.source
+    : {};
+  const local = cargoSourceRoute(localSources, 'crates-io', false);
+  if (local && local.index !== selected)
+    return releaseError(
+      'Repository Cargo crates-io source does not resolve to the selected registry.',
+      'EWORKSPACECONFIG',
+    );
+
+  const source: Record<string, Record<string, string>> = {};
+  if (configured && !local) {
+    for (const [position, name] of configured.names.entries()) {
+      const replacement = configured.names[position + 1];
+      source[name] = replacement
+        ? { 'replace-with': replacement }
+        : { registry: index };
+    }
+  } else if (!configured) {
+    const chained = Object.entries(sources).find(
+      ([name, entry]) =>
+        name !== 'crates-io' &&
+        record(entry) &&
+        entry['replace-with'] !== undefined &&
+        typeof entry.registry === 'string' &&
+        entry.registry.startsWith('sparse+') &&
+        url(entry.registry.slice(7)) === selected,
+    )?.[0];
+    if (chained)
+      return releaseError(
+        `Cargo source ${chained} cannot select the registry and replace another source.`,
+        'EWORKSPACECONFIG',
+      );
+    const existing = Object.entries(sources).find(
+      ([name, entry]) =>
+        name !== 'crates-io' &&
+        record(entry) &&
+        entry['replace-with'] === undefined &&
+        typeof entry.registry === 'string' &&
+        entry.registry.startsWith('sparse+') &&
+        url(entry.registry.slice(7)) === selected,
+    )?.[0];
+    if (existing) {
+      source['crates-io'] = { 'replace-with': existing };
+      source[existing] = { registry: index };
+    } else source['crates-io'] = { registry: index };
+  }
+  return {
+    registries: { 'crates-io': { index } },
+    ...(Object.keys(source).length ? { source } : {}),
+  };
 }
 export async function destination(
   context: VerifyConditionsContext,
@@ -202,10 +323,13 @@ export async function destination(
       'Cargo publishing requires a named HTTP sparse registry. Configure its index in .cargo/config.toml or CARGO_REGISTRIES_<NAME>_INDEX.',
       'EWORKSPACECONFIG',
     );
+  const resolvedIndex = `${url(index.slice(7))}/`;
+  if (name === 'crates-io' && resolvedIndex !== 'https://index.crates.io/')
+    cargoPackageConfig(configuration, `sparse+${resolvedIndex}`);
   return {
     ecosystem: 'cargo',
     registry: name,
-    index: `${url(index.slice(7))}/`,
+    index: resolvedIndex,
     ...cargoPolicy(context, options, previous),
   };
 }
@@ -490,6 +614,25 @@ export async function pack(
   const source = join(directory, 'source');
   try {
     await stageSource(context, inventory.root, source, plan.head, true);
+    let stagedCratesIoIndex: string | undefined;
+    const routeStagedCratesIo = (target: Destination) => {
+      if (
+        target.ecosystem !== 'cargo' ||
+        target.registry !== 'crates-io' ||
+        target.index === undefined ||
+        target.index === 'https://index.crates.io/'
+      )
+        return;
+      if (
+        stagedCratesIoIndex !== undefined &&
+        stagedCratesIoIndex !== target.index
+      )
+        return releaseError(
+          'Staged Cargo dependencies select different crates-io indexes.',
+          'EWORKSPACECONFIG',
+        );
+      stagedCratesIoIndex = target.index;
+    };
     // Local path dependencies need a registry version even when this batch does not bump them.
     for (const path of new Set([
       'Cargo.toml',
@@ -539,6 +682,7 @@ export async function pack(
               config,
               target,
             );
+            routeStagedCratesIo(targetDestination);
             if (
               targetDestination.registry === 'crates-io' &&
               targetDestination.index === 'https://index.crates.io/'
@@ -572,11 +716,39 @@ export async function pack(
     }
     const local = { ...context, cwd: join(source, pkg.path) };
     // Explicit registry selection is also used for resolving staged internal dependencies.
+    const customCratesIo =
+      dest.registry === 'crates-io' &&
+      typeof dest.index === 'string' &&
+      dest.index !== 'https://index.crates.io/';
+    if (
+      customCratesIo &&
+      stagedCratesIoIndex !== undefined &&
+      stagedCratesIoIndex !== dest.index
+    )
+      return releaseError(
+        'The Cargo package and its staged dependencies select different crates-io indexes.',
+        'EWORKSPACECONFIG',
+      );
+    const routeIndex = customCratesIo ? dest.index : stagedCratesIoIndex;
+    const cargoIndex = routeIndex ? `sparse+${routeIndex}` : undefined;
+    let cargoConfig: string | undefined;
+    if (cargoIndex) {
+      const configuration = await cargoConfiguration(context);
+      cargoConfig = join(directory, 'cargo-config.toml');
+      await writeFile(
+        cargoConfig,
+        stringify(cargoPackageConfig(configuration, cargoIndex)),
+      );
+    }
     const args = [
       'package',
       '--allow-dirty',
       '--registry',
       dest.registry,
+      // Cargo resolves a staged `registry = "crates-io"` dependency through
+      // its source table. Keep a selected noncanonical crates.io destination
+      // available for this subprocess without relying on the caller's home.
+      ...(cargoConfig ? ['--config', cargoConfig] : []),
       '--target-dir',
       join(directory, 'target'),
     ];
