@@ -60,6 +60,11 @@ avoid scripts with external side effects.
 Reproduce release regressions through real `semantic-release` runs. Check the
 published artifact as well as the plan when manifests change, and cover dry-run
 side effects and fresh-clone recovery when release state is involved.
+The consumer-entry test packs and installs the plugin before loading it by its
+documented package name. Packaging regressions use native npm and Cargo archives;
+the npm output fixture exercises both legacy arrays and npm 12's keyed JSON.
+OIDC tests use local identity, exchange, and signing services to check that invalid
+audiences and exchange responses fail before credentials or artifacts proceed.
 
 ## Make a reviewable change
 
