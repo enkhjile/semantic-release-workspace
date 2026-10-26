@@ -315,7 +315,9 @@ the npm audience. CircleCI supplies `NPM_ID_TOKEN`; leave provenance automatic o
 disabled there because required provenance is unsupported. OIDC selection never
 falls back to stored publish credentials after exchange failure. Exchanges are
 package-scoped and occur immediately before upload; tokens stay in memory.
-Registry reads and private dependency installation still need ordinary read access.
+Supplied npm and signing identities must match their destination audiences before
+they are forwarded. Registry reads and private dependency installation still need
+ordinary read access.
 
 Provenance is public and binds the tarball digest, package/version, repository,
 and source commit to its CI identity. Arbitrary environment variables are not
