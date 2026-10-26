@@ -354,6 +354,8 @@ Git-index registries and external-credential-provider-only setups are unsupporte
 Native Cargo packaging verifies each crate. Internal dependencies resolve from
 their destination registry; the verified normalized crate supplies upload metadata.
 Exact retained `.crate` bytes are uploaded through the registry API.
+The built-in crates.io destination needs no `[registries.crates-io]` alias.
+Custom registry indexes keep their configured registry names.
 
 `cargo.trustedPublishing` accepts `"auto"` (default), `true`, or `false`.
 Automatic mode selects GitHub Actions identity or GitLab.com's
