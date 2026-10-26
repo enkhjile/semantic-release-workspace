@@ -106,7 +106,7 @@ export function fixture() {
             }
         )[];
         dryRun?: boolean;
-        failure?: 'prepare' | 'after-prepare' | 'publish';
+        failure?: 'prepare' | 'after-prepare' | 'publish' | 'generate-notes';
         tagFormat?: string;
         pluginConfig?: Record<string, unknown>;
         env?: Record<string, string>;
