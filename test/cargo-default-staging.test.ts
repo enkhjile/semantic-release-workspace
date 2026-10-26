@@ -1,5 +1,12 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'smol-toml';
@@ -15,11 +22,41 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 
-async function setup(previousRegistry = false, customIndex = false) {
+type SourceLocation =
+  | 'home'
+  | 'local'
+  | 'none'
+  | 'direct-local'
+  | 'candidate-local'
+  | 'chained-local'
+  | 'candidate-chain-local';
+
+async function setup(
+  previousRegistry = false,
+  customIndex = false,
+  sourceLocation: SourceLocation = 'home',
+) {
   const repo = fixture();
   const service = await registry();
   mkdirSync(service.env.CARGO_HOME, { recursive: true });
-  const cargoConfig = `[source.crates-io]\nreplace-with = "fixture-source"\n[source.fixture-source]\nregistry = "sparse+${service.url}/cargo/index/"\n${previousRegistry ? `[registries.previous]\nindex = "sparse+${service.url}/cargo/index/"\n` : ''}${customIndex ? `[registries.crates-io]\nindex = "sparse+${service.url}/cargo/index/"\n` : ''}`;
+  const sourceConfig = `[source.crates-io]\nreplace-with = "fixture-source"\n[source.fixture-source]\nregistry = "sparse+${service.url}/cargo/index/"\n`;
+  const directSourceConfig = `[source.crates-io]\nregistry = "sparse+${service.url}/cargo/index/"\n`;
+  const candidateSourceConfig = `[source.fixture-source]\nregistry = "sparse+${service.url}/cargo/index/"\n`;
+  const chainedSourceConfig = `[source.crates-io]\nreplace-with = "fixture-source"\n[source.fixture-source]\nregistry = "sparse+${service.url}/cargo/index/"\nreplace-with = "redirected-source"\n[source.redirected-source]\nregistry = "sparse+${service.url}/cargo/redirected/"\n`;
+  const candidateChainSourceConfig = `[source.fixture-source]\nregistry = "sparse+${service.url}/cargo/index/"\nreplace-with = "redirected-source"\n[source.redirected-source]\nregistry = "sparse+${service.url}/cargo/redirected/"\n`;
+  const localSourceConfig =
+    sourceLocation === 'local'
+      ? sourceConfig
+      : sourceLocation === 'direct-local'
+        ? directSourceConfig
+        : sourceLocation === 'candidate-local'
+          ? candidateSourceConfig
+          : sourceLocation === 'chained-local'
+            ? chainedSourceConfig
+            : sourceLocation === 'candidate-chain-local'
+              ? candidateChainSourceConfig
+              : undefined;
+  const cargoConfig = `${sourceLocation === 'home' ? sourceConfig : ''}${previousRegistry ? `[registries.previous]\nindex = "sparse+${service.url}/cargo/index/"\n` : ''}${customIndex ? `[registries.crates-io]\nindex = "sparse+${service.url}/cargo/index/"\n` : ''}`;
   // Ordinary cases leave [registries.crates-io] undefined. The custom-index
   // case defines it explicitly and verifies that the archive retains its index.
   writeFileSync(join(service.env.CARGO_HOME, 'config.toml'), cargoConfig);
@@ -31,6 +68,7 @@ async function setup(previousRegistry = false, customIndex = false) {
     'crates/core/src/lib.rs': 'pub fn value() -> u32 { 42 }\n',
     'crates/adapter/Cargo.toml': `[package]\nname = "default-registry-adapter"\nversion = "1.0.0"\nedition = "2024"\nlicense = "MIT"\ndescription = "Default registry fixture"\n\n[dependencies]\nrenamed = { package = "default-registry-core", path = "../core", version = "=1.0.0"${previousRegistry ? ', registry = "previous"' : ''} }\n`,
     'crates/adapter/src/lib.rs': 'pub fn value() -> u32 { renamed::value() }\n',
+    ...(localSourceConfig ? { '.cargo/config.toml': localSourceConfig } : {}),
   };
   for (const [file, contents] of Object.entries(files)) {
     mkdirSync(join(repo.cwd, file, '..'), { recursive: true });
@@ -70,7 +108,11 @@ globalThis.fetch = (input, init) => {
     new URL('./fixtures/run-release.mjs', import.meta.url),
   );
   const plugin = fileURLToPath(new URL('../dist/index.mjs', import.meta.url));
-  const run = (settings: { dryRun?: boolean } = {}, directory = repo.cwd) => {
+  const run = (
+    settings: { dryRun?: boolean } = {},
+    directory = repo.cwd,
+    runtimeEnv = env,
+  ) => {
     const stdout = execFileSync(
       process.execPath,
       [
@@ -89,7 +131,7 @@ globalThis.fetch = (input, init) => {
           },
         }),
       ],
-      { cwd: directory, env, encoding: 'utf8', timeout: 120_000 },
+      { cwd: directory, env: runtimeEnv, encoding: 'utf8', timeout: 120_000 },
     );
     const result = stdout
       .split('\n')
@@ -105,7 +147,42 @@ globalThis.fetch = (input, init) => {
       readFileSync(join(service.env.CARGO_HOME, 'config.toml'), 'utf8'),
     ).toBe(cargoConfig);
   };
-  return { repo, service, run, unchanged, files };
+  const runWithEmptyPackageHome = () => {
+    const emptyHome = join(service.root, 'empty-cargo-home');
+    const bin = join(service.root, 'bin');
+    const trace = join(service.root, 'cargo-package.log');
+    const cargo = execFileSync('which', ['cargo'], {
+      encoding: 'utf8',
+    }).trim();
+    const shell = (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;
+    mkdirSync(emptyHome);
+    mkdirSync(bin);
+    const wrapper = join(bin, 'cargo');
+    writeFileSync(
+      wrapper,
+      `#!/bin/sh
+if [ "$1" = package ]; then
+  env -u CARGO_REGISTRY_TOKEN -u CARGO_REGISTRIES_CRATES_IO_TOKEN -u CARGO_REGISTRIES_CRATES_IO_INDEX -u CARGO_REGISTRIES_FIXTURE_TOKEN CARGO_HOME=${shell(emptyHome)} ${shell(cargo)} "$@" >${shell(trace)} 2>&1
+  status=$?
+  if [ "$status" -ne 0 ]; then cat ${shell(trace)} >&2; fi
+  exit "$status"
+fi
+exec ${shell(cargo)} "$@"
+`,
+    );
+    chmodSync(wrapper, 0o755);
+    return {
+      emptyHome,
+      trace,
+      released: run({}, repo.cwd, {
+        ...repo.env,
+        ...service.env,
+        CARGO_REGISTRY_TOKEN: 'fixture-token',
+        PATH: `${bin}:${repo.env.PATH}`,
+      }),
+    };
+  };
+  return { repo, service, run, runWithEmptyPackageHome, unchanged, files };
 }
 
 async function dependencyManifest(
@@ -228,6 +305,70 @@ test('Cargo retains a configured crates-io alias when it selects a custom index'
     registry: 'crates-io',
     index: `${service.url}/cargo/index/`,
   });
+  unchanged();
+});
+
+test.each([
+  ['no source alias', 'none'],
+  ['a matching repository-local source alias', 'local'],
+  ['a direct repository-local crates-io source', 'direct-local'],
+  ['a direct repository-local source candidate', 'candidate-local'],
+] as const)(
+  'Cargo packages coordinated crates-io dependencies with an empty package subprocess home and %s',
+  async (_sourceDescription, sourceLocation) => {
+    const { repo, service, runWithEmptyPackageHome, unchanged } = await setup(
+      false,
+      true,
+      sourceLocation,
+    );
+    const { emptyHome, trace, released } = runWithEmptyPackageHome();
+    expect(
+      released.ok,
+      `${released.logs}\n${readFileSync(trace, 'utf8')}`,
+    ).toBe(true);
+    expect(service.state().uploads).toEqual([
+      'cargo:default-registry-core@1.1.0',
+      'cargo:default-registry-adapter@1.1.0',
+    ]);
+    expect((await dependencyManifest(service)).dependencies).toEqual({
+      renamed: {
+        package: 'default-registry-core',
+        version: '=1.1.0',
+        'registry-index': `sparse+${service.url}/cargo/index/`,
+      },
+    });
+    expect(repo.state().execution.packages[0].destination).toMatchObject({
+      registry: 'crates-io',
+      index: `${service.url}/cargo/index/`,
+    });
+    expect(existsSync(join(emptyHome, 'config.toml'))).toBe(false);
+    unchanged();
+  },
+);
+
+test('Cargo rejects a chained source that conflicts with the selected crates-io index', async () => {
+  const { service, runWithEmptyPackageHome, unchanged } = await setup(
+    false,
+    true,
+    'chained-local',
+  );
+  const { released } = runWithEmptyPackageHome();
+  expect(released.ok).toBe(false);
+  expect(released.codes, released.logs).toContain('EWORKSPACECONFIG');
+  expect(service.state().uploads).toEqual([]);
+  unchanged();
+});
+
+test('Cargo rejects a matching source candidate that also replaces another source', async () => {
+  const { service, runWithEmptyPackageHome, unchanged } = await setup(
+    false,
+    true,
+    'candidate-chain-local',
+  );
+  const { released } = runWithEmptyPackageHome();
+  expect(released.ok).toBe(false);
+  expect(released.codes, released.logs).toContain('EWORKSPACECONFIG');
+  expect(service.state().uploads).toEqual([]);
   unchanged();
 });
 
