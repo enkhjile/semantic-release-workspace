@@ -81,7 +81,11 @@ const handler = async (req, res) => {
       exp: Math.floor(Date.now() / 1000) + 300,
     };
     const value = `${Buffer.from(JSON.stringify({ alg: 'RS256' })).toString('base64url')}.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.fixture-signature`;
-    return json({ value });
+    return json({
+      value: Object.hasOwn(trusted, 'identityValue')
+        ? trusted.identityValue
+        : value,
+    });
   }
   if (trusted && path.startsWith('/-/npm/v1/oidc/token/exchange/package/')) {
     if (trusted.rejectExchange)
@@ -98,14 +102,20 @@ const handler = async (req, res) => {
     state.exchanges ??= [];
     state.exchanges.push({ name, token });
     writeFileSync(stateFile, JSON.stringify(state));
+    const created = Date.now();
+    const expires =
+      created + (trusted.expiresInMs ?? (trusted.expired ? -1000 : 3600000));
     return json(
       {
         token_type: 'oidc',
         token,
-        created: new Date().toISOString(),
-        expires: new Date(
-          Date.now() + (trusted.expired ? -1000 : 3600000),
-        ).toISOString(),
+        created: trusted.numericDates
+          ? Math.floor(created / 1000)
+          : new Date(created).toISOString(),
+        expires: trusted.numericDates
+          ? Math.floor(expires / 1000)
+          : new Date(expires).toISOString(),
+        ...(trusted.exchangeResponse ?? {}),
       },
       201,
     );
@@ -158,10 +168,11 @@ const handler = async (req, res) => {
     }
     const audience = `${base.replace(/^https?:\/\//, '')}/cargo`;
     if (
-      !(
-        claims?.aud === audience ||
-        (Array.isArray(claims?.aud) && claims.aud.includes(audience))
-      ) ||
+      (!cargoTrusted.permissiveAudience &&
+        !(
+          claims?.aud === audience ||
+          (Array.isArray(claims?.aud) && claims.aud.includes(audience))
+        )) ||
       req.headers.authorization ||
       !req.headers['user-agent']?.includes('semantic-release-workspace')
     )

@@ -433,8 +433,20 @@ export async function pack(
           directory,
         ],
       );
-      const result: unknown = JSON.parse(output.toString());
-      const entry = Array.isArray(result) ? result[0] : undefined;
+      let result: unknown;
+      try {
+        result = JSON.parse(output.toString());
+      } catch {
+        return releaseError('npm pack did not produce valid JSON output.');
+      }
+      const entry =
+        Array.isArray(result) && result.length === 1
+          ? result[0]
+          : record(result) &&
+              Object.keys(result).length === 1 &&
+              Object.hasOwn(result, pkg.name)
+            ? result[pkg.name]
+            : undefined;
       if (
         !record(entry) ||
         entry.name !== pkg.name ||
@@ -528,6 +540,8 @@ export async function pack(
               target,
             );
             dep.registry = targetDestination.registry;
+            // Resolve the published dependency without loading an excluded local workspace member.
+            delete dep.path;
             changed = true;
           }
         }

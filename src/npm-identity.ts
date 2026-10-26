@@ -45,7 +45,7 @@ export function serviceURL(value: unknown): string {
     );
   }
 }
-// Check routing before disclosing supplied identities; registries verify signatures.
+// Check routing before disclosing identities; registries verify signatures.
 export function identityForAudience(token: string, audience: string): string {
   try {
     const parts = token.split('.');
@@ -105,7 +105,7 @@ export async function identityToken(
       !data.value
     )
       throw new Error();
-    return data.value;
+    return identityForAudience(data.value, audience);
   } catch {
     return releaseError(
       'Cannot obtain CI identity. Check the supported provider, audience and id-token permissions.',
@@ -139,14 +139,20 @@ export async function publishingOptions(
       `${dest.registry}/-/npm/v1/oidc/token/exchange/package/${encodeURIComponent(name)}`,
       { ...opts, agent: exchangeAgent, method: 'POST', forceAuth: { token } },
     );
+    if (!record(data)) throw new Error();
+    // npm returns Unix seconds; also accept documented ISO timestamps.
+    const expires =
+      typeof data.expires === 'number'
+        ? data.expires * 1000
+        : typeof data.expires === 'string'
+          ? Date.parse(data.expires)
+          : Number.NaN;
     if (
-      !record(data) ||
       data.token_type !== 'oidc' ||
       typeof data.token !== 'string' ||
       !data.token ||
-      typeof data.expires !== 'string' ||
-      !Number.isFinite(Date.parse(data.expires)) ||
-      Date.parse(data.expires) < Date.now() + 15_000
+      !Number.isFinite(expires) ||
+      expires < Date.now() + 15_000
     )
       throw new Error();
     return { ...opts, forceAuth: { token: data.token } };
