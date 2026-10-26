@@ -29,7 +29,8 @@ type SourceLocation =
   | 'direct-local'
   | 'candidate-local'
   | 'chained-local'
-  | 'candidate-chain-local';
+  | 'candidate-chain-local'
+  | 'split-local';
 
 async function setup(
   previousRegistry = false,
@@ -44,6 +45,8 @@ async function setup(
   const sourceConfig = `[source.crates-io]\nreplace-with = "fixture-source"\n[source.fixture-source]\nregistry = "sparse+${service.url}/cargo/index/"\n`;
   const directSourceConfig = `[source.crates-io]\nregistry = "sparse+${service.url}/cargo/index/"\n`;
   const candidateSourceConfig = `[source.fixture-source]\nregistry = "sparse+${service.url}/cargo/index/"\n`;
+  const splitLocalSourceConfig = `[source.crates-io]\nreplace-with = "fixture-source"\n`;
+  const splitGlobalSourceConfig = `[source.fixture-source]\nregistry = "sparse+${selected.url}/cargo/index/"\n`;
   const chainedSourceConfig = `[source.crates-io]\nreplace-with = "fixture-source"\n[source.fixture-source]\nregistry = "sparse+${service.url}/cargo/index/"\nreplace-with = "redirected-source"\n[source.redirected-source]\nregistry = "sparse+${service.url}/cargo/redirected/"\n`;
   const candidateChainSourceConfig = `[source.fixture-source]\nregistry = "sparse+${service.url}/cargo/index/"\nreplace-with = "redirected-source"\n[source.redirected-source]\nregistry = "sparse+${service.url}/cargo/redirected/"\n`;
   const localSourceConfig =
@@ -57,11 +60,13 @@ async function setup(
             ? chainedSourceConfig
             : sourceLocation === 'candidate-chain-local'
               ? candidateChainSourceConfig
-              : undefined;
+              : sourceLocation === 'split-local'
+                ? splitLocalSourceConfig
+                : undefined;
   const namedRegistry = crossRegistry
     ? `[registries.fixture]\nindex = "sparse+${service.url}/cargo/index/"\n`
     : '';
-  const cargoConfig = `${sourceLocation === 'home' ? sourceConfig : ''}${previousRegistry ? `[registries.previous]\nindex = "sparse+${service.url}/cargo/index/"\n` : ''}${customIndex ? `[registries.crates-io]\nindex = "sparse+${selected.url}/cargo/index/"\n` : ''}`;
+  const cargoConfig = `${sourceLocation === 'home' ? sourceConfig : ''}${sourceLocation === 'split-local' ? splitGlobalSourceConfig : ''}${previousRegistry ? `[registries.previous]\nindex = "sparse+${service.url}/cargo/index/"\n` : ''}${customIndex ? `[registries.crates-io]\nindex = "sparse+${selected.url}/cargo/index/"\n` : ''}`;
   // Ordinary cases leave [registries.crates-io] undefined. The custom-index
   // case defines it explicitly and verifies that the archive retains its index.
   writeFileSync(join(service.env.CARGO_HOME, 'config.toml'), cargoConfig);
@@ -360,6 +365,35 @@ test.each([
     unchanged();
   },
 );
+
+test('Cargo combines a repository-local source prefix with a global terminal', async () => {
+  const { repo, service, run, runWithEmptyPackageHome, unchanged } =
+    await setup(false, true, 'split-local');
+  const refs = repo.refs();
+  const dry = run({ dryRun: true });
+  expect(dry.ok, dry.logs).toBe(true);
+  expect(service.state().requests).toEqual([]);
+  expect(repo.refs()).toBe(refs);
+  unchanged();
+
+  const { emptyHome, trace, released } = runWithEmptyPackageHome();
+  expect(released.ok, `${released.logs}\n${readFileSync(trace, 'utf8')}`).toBe(
+    true,
+  );
+  expect(service.state().uploads).toEqual([
+    'cargo:default-registry-core@1.1.0',
+    'cargo:default-registry-adapter@1.1.0',
+  ]);
+  expect((await dependencyManifest(service)).dependencies).toEqual({
+    renamed: {
+      package: 'default-registry-core',
+      version: '=1.1.0',
+      'registry-index': `sparse+${service.url}/cargo/index/`,
+    },
+  });
+  expect(existsSync(join(emptyHome, 'config.toml'))).toBe(false);
+  unchanged();
+});
 
 test('Cargo packages a named-registry crate with a staged custom crates-io dependency', async () => {
   const { repo, service, selected, runWithEmptyPackageHome, unchanged } =
