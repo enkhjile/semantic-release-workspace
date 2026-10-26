@@ -406,6 +406,10 @@ const server = secure
       handler,
     )
   : createServer(handler);
+// A lifecycle can spend more than Node's five-second default between
+// verification requests. Keep the fixture's client sockets valid for a test.
+server.keepAliveTimeout = 120_000;
+server.headersTimeout = 121_000;
 server.listen(0, '127.0.0.1', () => {
   base = `${secure ? 'https' : 'http'}://127.0.0.1:${server.address().port}`;
   process.send(base);
