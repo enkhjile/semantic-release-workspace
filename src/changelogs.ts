@@ -17,32 +17,35 @@ import {
 } from './release-io.js';
 
 type Planning = PlanningState & { current: Snapshot };
+type ChangelogOrigin = { journal: Journal; change: ChangelogChange };
+const title = /^(#[ \t][^\n]*(?:\r?\n)+)/;
 
-function changelogOrigin(
+function changelogOrigins(
   path: string,
   planning: Planning,
   ancestors: Map<string, number>,
-): Journal | undefined {
-  const origins: Journal[] = [];
+): { origins: ChangelogOrigin[]; history: ChangelogOrigin[] } {
+  const origins: ChangelogOrigin[] = [];
+  const history: ChangelogOrigin[] = [];
   for (const pkg of planning.plan.packages.filter(
     (entry) => join(entry.path, 'CHANGELOG.md') === path,
   )) {
     const current = pkg.currentVersion;
     if (!current) continue;
-    let selected: Journal | undefined;
+    let selected: ChangelogOrigin | undefined;
     let selectedVersion: string | undefined;
     for (const entry of planning.current.history) {
-      if (
-        !entry.execution ||
-        !ancestors.has(entry.head) ||
-        !entry.planning?.releaseNotes?.changelogs.some(
-          (change) => change.path === path,
-        )
-      )
-        continue;
-      const version = entry.planning.plan.packages.find(
+      const previousPackage = entry.planning?.plan.packages.find(
         (old) => old.id === pkg.id,
-      )?.nextVersion;
+      );
+      const change = previousPackage
+        ? entry.planning?.releaseNotes?.changelogs.find(
+            (change) =>
+              change.path === join(previousPackage.path, 'CHANGELOG.md'),
+          )
+        : undefined;
+      if (!entry.execution || !ancestors.has(entry.head) || !change) continue;
+      const version = previousPackage?.nextVersion;
       if (!version || !lte(version, current)) continue;
       const pre = prerelease(version);
       if (
@@ -52,16 +55,45 @@ function changelogOrigin(
             prerelease(current)?.slice(0, -1).join('.'))
       )
         continue;
+      history.push({ journal: entry, change });
       if (!selectedVersion || gt(version, selectedVersion)) {
-        selected = entry;
+        selected = { journal: entry, change };
         selectedVersion = version;
       }
     }
     if (selected) origins.push(selected);
   }
-  return origins.sort(
-    (a, b) => (ancestors.get(a.head) ?? 0) - (ancestors.get(b.head) ?? 0),
-  )[0];
+  const unique = new Map<string, ChangelogOrigin>();
+  for (const origin of origins.sort(
+    (a, b) =>
+      (ancestors.get(a.journal.head) ?? 0) -
+      (ancestors.get(b.journal.head) ?? 0),
+  ))
+    if (!unique.has(origin.change.path)) unique.set(origin.change.path, origin);
+  return { origins: [...unique.values()], history };
+}
+
+async function verifyChangelog(
+  context: VerifyConditionsContext,
+  { journal, change }: ChangelogOrigin,
+): Promise<void> {
+  const route = journal.planning?.plan.release;
+  const ref = refFor(
+    journal.head,
+    undefined,
+    route ? digest(JSON.stringify(route)) : undefined,
+  );
+  if (
+    !journal.execution ||
+    (await fetchRef(context, ref)) !== journal.execution.prepared ||
+    (await readGitFile(context, journal.head, change.path)) !== change.before ||
+    (await readGitFile(context, journal.execution.prepared, change.path)) !==
+      change.after
+  )
+    releaseError(
+      'The previous changelog snapshot is missing or corrupt.',
+      'EWORKSPACEARTIFACT',
+    );
 }
 
 export async function changelogChanges(
@@ -90,31 +122,37 @@ export async function changelogChanges(
         'Changelog differs from committed source history.',
         'EWORKSPACEDIRTY',
       );
-    const origin = changelogOrigin(path, planning, ancestors);
     let base = before ?? '';
-    const previous = origin?.planning?.releaseNotes?.changelogs.find(
-      (change) => change.path === path,
-    );
-    if (origin?.execution && previous && before === previous.before) {
-      const route = origin.planning?.plan.release;
-      const ref = refFor(
-        origin.head,
-        undefined,
-        route ? digest(JSON.stringify(route)) : undefined,
-      );
-      if (
-        (await fetchRef(context, ref)) !== origin.execution.prepared ||
-        (await readGitFile(context, origin.head, path)) !== previous.before ||
-        (await readGitFile(context, origin.execution.prepared, path)) !==
-          previous.after
-      )
-        releaseError(
-          'The previous changelog snapshot is missing or corrupt.',
-          'EWORKSPACEARTIFACT',
-        );
-      base = previous.after;
+    const retained = new Set<string>();
+    const { origins, history } = changelogOrigins(path, planning, ancestors);
+    for (const origin of origins) {
+      if (before !== origin.change.before) continue;
+      await verifyChangelog(context, origin);
+      retained.add(origin.change.after);
     }
-    const header = /^(#[ \t][^\n]*(?:\r?\n)+)/.exec(base)?.[0];
+    const bodies = [...retained];
+    if (bodies[0]) base = bodies[0];
+    for (const snapshot of bodies.slice(1)) {
+      const body = snapshot.replace(title, '');
+      // Only complete archived histories identify shared suffixes; notes remain opaque.
+      const common = history
+        .map((origin) => ({
+          origin,
+          body: origin.change.after.replace(title, ''),
+        }))
+        .filter(
+          (entry) =>
+            entry.body &&
+            base.endsWith(entry.body) &&
+            body.endsWith(entry.body),
+        )
+        .sort((a, b) => b.body.length - a.body.length)[0];
+      if (common) {
+        await verifyChangelog(context, common.origin);
+        base = `${base.slice(0, -common.body.length)}${body.slice(0, -common.body.length)}${common.body}`;
+      } else base = `${base}\n\n${body}`;
+    }
+    const header = title.exec(base)?.[0];
     const entries = packages
       .map(
         (pkg) =>

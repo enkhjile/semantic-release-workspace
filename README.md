@@ -219,7 +219,8 @@ Set `changelog: true` in the plugin options to generate package `CHANGELOG.md`
 files; the default is `false`, and other types are rejected. npm/Cargo packages
 sharing a directory share one file with ecosystem-labelled entries. Entries carry
 package/version, source date, channel, and notes. Eligible released history is
-carried forward; explicit committed source edits take precedence. Re-enabling
+carried forward by package identity, including after a directory move;
+explicit committed source edits take precedence. Re-enabling
 changelogs preserves earlier generated history without backfilling disabled releases.
 Stable history excludes prereleases; prerelease history follows its identifier.
 
