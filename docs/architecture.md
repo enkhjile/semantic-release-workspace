@@ -81,6 +81,10 @@ Scripts run during the initial pack; retries reuse retained bytes. Ignore
 selection and build outputs are preserved without allowing packaging changes
 or lockfiles to become source edits.
 
+Staged Cargo dependencies omit the registry name only for the built-in crates.io
+index. Custom indexes retain their explicit names, including a configured
+`crates-io` alias.
+
 Prepared commits and exact archives are retained in immutable Git refs.
 Artifacts include public metadata and SHA-256/SHA-512 integrity proofs; their
 commit must have the expected prepared commit as parent. Checks bind each
@@ -183,6 +187,13 @@ attestation alongside tarball integrity. Exact bundle reuse preserves the
 original CI run, avoids additional signing ledger entries, and lets an accepted
 uncertain upload finish without fresh CI credentials. Retries and promotions
 must not re-sign old bytes as a new build.
+
+Registry proof comparisons account for two equivalent
+[ProtoJSON defaults](https://protobuf.dev/programming-guides/json/#presence-and-default-values):
+an empty DSSE signature `keyid`, and an empty `rfc3161Timestamps` array inside an
+existing `timestampVerificationData` object. Only these fields normalize before
+strict comparison; message presence, unknown fields, and cryptographic evidence
+remain significant. The retained original bundle stays unchanged.
 
 ## Channels and release output are part of the frozen plan
 
