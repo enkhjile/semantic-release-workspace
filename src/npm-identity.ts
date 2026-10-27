@@ -84,7 +84,7 @@ export async function identityToken(
       env.SIGSTORE_ID_TOKEN &&
       ['github', 'gitlab'].includes(ciProvider(env) ?? '')
     )
-      return env.SIGSTORE_ID_TOKEN;
+      return identityForAudience(env.SIGSTORE_ID_TOKEN, audience);
     if (ciProvider(env) !== 'github' || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN)
       throw new Error();
     const url = new URL(serviceURL(env.ACTIONS_ID_TOKEN_REQUEST_URL));

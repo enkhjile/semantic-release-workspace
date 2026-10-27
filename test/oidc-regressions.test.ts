@@ -193,6 +193,83 @@ test('fetched Sigstore identity is checked before any signing service receives i
   expect(JSON.stringify(result)).not.toContain('secret');
 });
 
+const signingIdentity = (head: string, aud: unknown) =>
+  `${Buffer.from('{"alg":"RS256"}').toString('base64url')}.${Buffer.from(
+    JSON.stringify({
+      iss: 'https://token.actions.githubusercontent.com',
+      sub: 'repo:fixture/repo:ref:refs/heads/main',
+      repository: 'fixture/repo',
+      repository_visibility: 'public',
+      workflow_identity:
+        'https://github.com/fixture/repo/.github/workflows/release.yml@refs/heads/main',
+      sha: head,
+      aud,
+    }),
+  ).toString('base64url')}.fixture-signature`;
+
+test.each([
+  ['malformed JWT', null],
+  ['missing audience', undefined],
+  ['wrong audience', 'unrelated-audience'],
+  ['mixed audience array', ['sigstore', 7]],
+] as const)(
+  'supplied Sigstore identity with %s is rejected before signing',
+  async (_label, audience) => {
+    const { repo, service, settings } = await setup();
+    const signing = await sigstore();
+    const result = repo.run({
+      ...settings,
+      env: {
+        ...settings.env,
+        SIGSTORE_ID_TOKEN:
+          audience === null
+            ? 'not-a-jwt'
+            : signingIdentity(settings.env.GITHUB_SHA, audience),
+      },
+      pluginConfig: {
+        publish: true,
+        npm: {
+          ...settings.pluginConfig.npm,
+          provenance: true,
+          sigstore: signing.config,
+        },
+      },
+    });
+    expect(result.codes).toContain('EWORKSPACEPROVENANCE');
+    expect(signing.events()).toEqual([]);
+    expect(identityRequests(service)).toEqual([]);
+    expect(exchangeRequests(service)).toEqual([]);
+    expect(service.state().uploads).toEqual([]);
+  },
+);
+
+test.each([['sigstore'], [['other', 'sigstore']]])(
+  'matching supplied Sigstore audience %j publishes signed native bytes',
+  async (audience) => {
+    const { repo, service, settings } = await setup();
+    const signing = await sigstore();
+    const result = repo.run({
+      ...settings,
+      env: {
+        ...settings.env,
+        SIGSTORE_ID_TOKEN: signingIdentity(settings.env.GITHUB_SHA, audience),
+      },
+      pluginConfig: {
+        publish: true,
+        npm: {
+          ...settings.pluginConfig.npm,
+          provenance: true,
+          sigstore: signing.config,
+        },
+      },
+    });
+    expect(result.ok, result.logs).toBe(true);
+    expect(service.state().uploads).toEqual(['npm:identity-fixture@1.1.0']);
+    expect(signing.events()).toContain('/api/v2/signingCert');
+    expect(signing.events()).toContain('/api/v1/log/entries');
+  },
+);
+
 test.each([
   ['expired ISO expiry', { expires: '2020-01-01T00:00:00.000Z' }],
   ['malformed ISO expiry', { expires: 'exchange-secret echoed by upstream' }],
