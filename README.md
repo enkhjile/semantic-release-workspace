@@ -444,9 +444,12 @@ Merging a higher stable branch into a lower one can promote its original version
 through `addChannel`. The plugin checks retained artifacts and registry proofs,
 then moves npm tags; Cargo versions are reused without uploading. No package is
 rebuilt, republished, or signed again, and no new changelog entry is created.
-Promotions include packages unchanged in the latest batch and require retained
-publication history, not planning-only records. Interrupted promotions recover
-on the same source commit; already-confirmed tag changes need no new CI credentials.
+Promotions include packages unchanged in the latest batch, preserve newer
+published versions already reachable on the destination branch, and require
+retained publication history. Enabling publishing cannot promote planning-only
+versions into published history. The selected versions are retained for retries.
+Interrupted promotions recover on the same source commit; already-confirmed
+tag changes need no new CI credentials.
 See semantic-release's [branch configuration](https://semantic-release.org/foundation/workflow-configuration/).
 
 ## Recovery and backups

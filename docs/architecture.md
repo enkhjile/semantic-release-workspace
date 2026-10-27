@@ -208,7 +208,10 @@ while Cargo records membership through SemVer and Git history.
 
 [Promotion](../src/channels.ts) verifies every original artifact and registry
 proof before moving any npm channel. It includes versions unchanged in the latest
-batch and reuses Cargo versions without uploading. Intent is persisted before
+batch and preserves newer published ancestor versions on the destination branch.
+Selected package versions are frozen in the promotion intent for retries, and
+planning-only records cannot satisfy publication proof. Cargo versions are reused
+without uploading. Intent is persisted before
 core records its channel, allowing startup recovery even when core no longer
 calls `addChannel`. Promotion does not pack, upload or sign again.
 
