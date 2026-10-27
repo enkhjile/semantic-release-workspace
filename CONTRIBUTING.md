@@ -65,6 +65,7 @@ documented package name. Packaging regressions use native npm and Cargo archives
 the npm output fixture exercises both legacy arrays and npm 12's keyed JSON.
 OIDC tests use local identity, exchange, and signing services to check that invalid
 audiences and exchange responses fail before credentials or artifacts proceed.
+Keep native Cargo dev-dependency omission covered through these real lifecycles.
 
 ## Make a reviewable change
 

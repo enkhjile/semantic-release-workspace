@@ -222,6 +222,8 @@ function cargoEdges(
         if (value.version !== undefined && typeof value.version !== 'string')
           dependencyError(`Invalid Cargo dependency version: ${name}`);
         const source = typeof value.version === 'string' ? value.version : null;
+        // Cargo omits path-only dev dependencies from published crates.
+        if (section.startsWith('dev') && source === null) continue;
         const spec = project(
           packageId(pkg),
           manifestPath,

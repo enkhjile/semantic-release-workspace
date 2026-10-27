@@ -83,7 +83,10 @@ or lockfiles to become source edits.
 
 Staged Cargo dependencies omit the registry name only for the built-in crates.io
 index. Custom indexes retain their explicit names, including a configured
-`crates-io` alias.
+`crates-io` alias. Versionless Cargo dev dependencies retain their local-only
+meaning: planning does not add a version, and isolated packaging omits them
+before workspace members are excluded. Shared workspace definitions still serve
+runtime consumers.
 
 Prepared commits and exact archives are retained in immutable Git refs.
 Artifacts include public metadata and SHA-256/SHA-512 integrity proofs; their

@@ -188,6 +188,8 @@ npm and Cargo dependencies are coordinated separately, in dependency-first group
 - Out-of-range runtime, optional, and Cargo build requirements force at least a
   patch release of the dependent; npm peer requirement changes force a major.
 - Dev-only updates appear in the plan without forcing a dependent release.
+  Cargo dev dependencies without a version stay local and are omitted from
+  published crates, matching native Cargo behavior.
 - npm `workspace:` aliases/shorthands and `file:`/`link:` references track local
   versions. Optional declarations override duplicate normal dependencies.
 - Compatible ordinary npm semver requirements can select local packages;
@@ -195,8 +197,8 @@ npm and Cargo dependencies are coordinated separately, in dependency-first group
   remain external. Cargo registry-only and excluded/outside-workspace crates
   remain external.
 - Cargo bare `1.2.3` means caret compatibility; npm bare `1.2.3` is exact.
-  Cargo comma-separated comparators intersect. Path-only Cargo dependencies
-  receive a proposed version requirement.
+  Cargo comma-separated comparators intersect. Path-only Cargo runtime and
+  build dependencies receive a proposed version requirement.
 - Cycles settle without repeatedly incrementing a package. npm publication cycles
   use a stable order; Cargo publication cycles are rejected.
 
