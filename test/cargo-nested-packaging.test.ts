@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 async function setup() {
-  const repo = fixture();
+  const repo = fixture({ synchronizeDependents: true });
   const service = await registry();
   const inherited =
     'version.workspace = true\nedition.workspace = true\nlicense.workspace = true\n';

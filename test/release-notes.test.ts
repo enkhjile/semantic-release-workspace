@@ -10,7 +10,7 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 function workspace() {
-  const repo = fixture();
+  const repo = fixture({ synchronizeDependents: true });
   writeFileSync(
     join(repo.cwd, 'package.json'),
     JSON.stringify({ private: true, workspaces: ['packages/*'] }),
