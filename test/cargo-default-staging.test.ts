@@ -49,20 +49,16 @@ async function setup(
   const splitGlobalSourceConfig = `[source.fixture-source]\nregistry = "sparse+${selected.url}/cargo/index/"\n`;
   const chainedSourceConfig = `[source.crates-io]\nreplace-with = "fixture-source"\n[source.fixture-source]\nregistry = "sparse+${service.url}/cargo/index/"\nreplace-with = "redirected-source"\n[source.redirected-source]\nregistry = "sparse+${service.url}/cargo/redirected/"\n`;
   const candidateChainSourceConfig = `[source.fixture-source]\nregistry = "sparse+${service.url}/cargo/index/"\nreplace-with = "redirected-source"\n[source.redirected-source]\nregistry = "sparse+${service.url}/cargo/redirected/"\n`;
-  const localSourceConfig =
-    sourceLocation === 'local'
-      ? sourceConfig
-      : sourceLocation === 'direct-local'
-        ? directSourceConfig
-        : sourceLocation === 'candidate-local'
-          ? candidateSourceConfig
-          : sourceLocation === 'chained-local'
-            ? chainedSourceConfig
-            : sourceLocation === 'candidate-chain-local'
-              ? candidateChainSourceConfig
-              : sourceLocation === 'split-local'
-                ? splitLocalSourceConfig
-                : undefined;
+  const localSourceConfig = {
+    home: undefined,
+    none: undefined,
+    local: sourceConfig,
+    'direct-local': directSourceConfig,
+    'candidate-local': candidateSourceConfig,
+    'chained-local': chainedSourceConfig,
+    'candidate-chain-local': candidateChainSourceConfig,
+    'split-local': splitLocalSourceConfig,
+  }[sourceLocation];
   const namedRegistry = crossRegistry
     ? `[registries.fixture]\nindex = "sparse+${service.url}/cargo/index/"\n`
     : '';
