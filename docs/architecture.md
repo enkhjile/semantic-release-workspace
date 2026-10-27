@@ -216,7 +216,10 @@ calls `addChannel`. Promotion does not pack, upload or sign again.
 [optional changelogs](../src/changelogs.ts) retain exact before/after bytes in the
 journal and prepared commit. Packages sharing a directory share a changelog.
 Eligible released history is carried forward, with source edits taking precedence
-and stable/prerelease histories distinct. Pending retries reuse exact notes and
+and stable/prerelease histories distinct. Package moves follow identity to prior
+changelog paths for snapshot verification and write the accumulated history at
+the new path. Co-located histories retain a verified common suffix only once.
+Pending retries reuse exact notes and
 reject a changed changelog policy. Promotions reuse historical notes without
 adding changelog entries.
 
