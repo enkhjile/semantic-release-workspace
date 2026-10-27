@@ -766,12 +766,13 @@ export async function pack(
       workspace.workspace.members = pkg.path === '.' ? [] : [pkg.path];
       workspace.workspace['default-members'] =
         pkg.path === '.' ? ['.'] : [pkg.path];
-      // Keep unrelated packages out of native Cargo's workspace-wide resolution.
+      // Isolate unrelated crates, but let ancestor manifests inherit from this root.
       workspace.workspace.exclude = inventory.packages
         .filter(
           (entry) =>
             entry.ecosystem === 'cargo' &&
             entry.path !== pkg.path &&
+            !pkg.path.startsWith(`${entry.path}/`) &&
             entry.path !== '.',
         )
         .map((entry) => entry.path);

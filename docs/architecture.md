@@ -88,6 +88,11 @@ meaning: planning does not add a version, and isolated packaging omits them
 before workspace members are excluded. Shared workspace definitions still serve
 runtime consumers.
 
+Cargo staging selects the release crate as the sole workspace member and excludes
+unrelated crates. It keeps ancestor paths out of the exclusion list because Cargo
+may parse their inherited metadata while finding the workspace root, even when
+an ancestor package is private.
+
 Prepared commits and exact archives are retained in immutable Git refs.
 Artifacts include public metadata and SHA-256/SHA-512 integrity proofs; their
 commit must have the expected prepared commit as parent. Checks bind each
