@@ -18,7 +18,7 @@ import { record } from './workspace-files.js';
 
 export interface Edit {
   field: string[];
-  value: string;
+  value: string | null;
 }
 const equal = (a: string[], b: string[]) =>
   JSON.stringify(a) === JSON.stringify(b);
@@ -159,6 +159,8 @@ export async function manifestChanges(
     for (const change of pkg.dependencyUpdates)
       add(change.manifestPath, { field: change.field, value: change.to });
   }
+  for (const change of plan.stagingDependencies ?? [])
+    add(change.manifestPath, { field: change.field, value: change.to });
   return Promise.all(
     [...edits]
       .sort(([a], [b]) => a.localeCompare(b))

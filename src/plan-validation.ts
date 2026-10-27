@@ -60,7 +60,14 @@ export function validPlanning(value: unknown): value is PlanningState {
     !oid(plan.head) ||
     !(plan.baseHead === null || oid(plan.baseHead)) ||
     !Array.isArray(plan.packages) ||
-    !Array.isArray(plan.groups)
+    !Array.isArray(plan.groups) ||
+    (plan.dependencyPolicy !== undefined &&
+      !['independent', 'synchronize'].includes(
+        String(plan.dependencyPolicy),
+      )) ||
+    (plan.stagingDependencies !== undefined &&
+      (!Array.isArray(plan.stagingDependencies) ||
+        !plan.stagingDependencies.every(update)))
   )
     return false;
   const names = new Set<string>();

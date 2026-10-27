@@ -5,7 +5,11 @@ import type { VerifyConditionsContext } from 'semantic-release';
 import { npmChannel } from './branches.js';
 import { changelogChanges } from './changelogs.js';
 import { git, type Journal, type Snapshot } from './journal.js';
-import type { PlanningState, ReleaseNotes } from './plan-types.js';
+import type {
+  PackageVersion,
+  PlanningState,
+  ReleaseNotes,
+} from './plan-types.js';
 import { planNotes } from './planning.js';
 import type { PublicationPackage } from './publication-state.js';
 import { releaseError } from './release-io.js';
@@ -179,6 +183,7 @@ export async function notesForPromotion(
   context: VerifyConditionsContext,
   source: Journal,
   history: Journal[],
+  versions: PackageVersion[] = source.planning?.versions ?? [],
 ): Promise<string> {
   if (!source.planning)
     return `# Workspace channel promotion\n\nBranch: \`${context.branch.name}\` · Channel: \`${npmChannel(context.branch.channel)}\`\n\nNo new changelog entries or artifacts are created.`;
@@ -190,7 +195,7 @@ export async function notesForPromotion(
     packages: [],
     changelogs: [],
   };
-  for (const version of source.planning.versions) {
+  for (const version of versions) {
     if (
       !source.planning.plan.packages.some(
         (pkg) => pkg.id === version.id && !pkg.private,

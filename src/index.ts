@@ -28,6 +28,7 @@ import {
 } from './journal.js';
 import { createVersionPlan } from './planning.js';
 import {
+  npmVisibilityTimeout,
   preflight,
   preparePublication,
   publishing,
@@ -57,6 +58,15 @@ export async function verifyConditions(
     );
   }
   changelogEnabled(config);
+  npmVisibilityTimeout(config);
+  if (
+    config.synchronizeDependents !== undefined &&
+    typeof config.synchronizeDependents !== 'boolean'
+  )
+    throw new SemanticReleaseError(
+      'synchronizeDependents must be a boolean.',
+      'EWORKSPACECONFIG',
+    );
   npmChannel(context.branch.channel);
   if (
     branchType(context) === 'prerelease' &&

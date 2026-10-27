@@ -15,7 +15,7 @@ import { archiveFile } from './archive.js';
 import { npmChannel, releaseRoute } from './branches.js';
 import { cargoPolicy, cargoUserAgent } from './cargo-identity.js';
 import { git } from './journal.js';
-import { editManifest } from './manifests.js';
+import { type Edit, editManifest } from './manifests.js';
 import { serviceURL } from './npm-identity.js';
 import { createProvenance } from './npm-provenance.js';
 import {
@@ -68,6 +68,15 @@ async function toml(path: string): Promise<Record<string, unknown>> {
     );
   }
 }
+function mergeCargoEntries(global: unknown, local: unknown) {
+  const merged = { ...(record(global) ? global : {}) };
+  for (const [name, entry] of Object.entries(record(local) ? local : {})) {
+    const previous = merged[name];
+    merged[name] =
+      record(previous) && record(entry) ? { ...previous, ...entry } : entry;
+  }
+  return merged;
+}
 async function cargoConfiguration(context: VerifyConditionsContext) {
   const home =
     context.env?.CARGO_HOME ?? join(context.env?.HOME ?? homedir(), '.cargo');
@@ -75,11 +84,120 @@ async function cargoConfiguration(context: VerifyConditionsContext) {
   const local = await toml(
     join(context.cwd ?? process.cwd(), '.cargo/config.toml'),
   );
-  const registries = {
-    ...(record(global.registries) ? global.registries : {}),
-    ...(record(local.registries) ? local.registries : {}),
+  const registries = mergeCargoEntries(global.registries, local.registries);
+  const sources = mergeCargoEntries(global.source, local.source);
+  return { home, global, local, registries, sources };
+}
+
+type CargoSourceRoute = { names: string[]; index: string };
+
+function cargoSourceRoute(
+  sources: Record<string, unknown>,
+  name: string,
+  required = true,
+): CargoSourceRoute | undefined {
+  const names: string[] = [];
+  for (let current = name; ; ) {
+    if (names.includes(current))
+      return releaseError(
+        'Cargo source replacements must not form a cycle.',
+        'EWORKSPACECONFIG',
+      );
+    const entry = sources[current];
+    if (!record(entry)) {
+      if (!names.length || !required) return undefined;
+      return releaseError(
+        `Cargo source replacement ${names.at(-1)} is not configured.`,
+        'EWORKSPACECONFIG',
+      );
+    }
+    names.push(current);
+    const replacement = entry['replace-with'];
+    if (replacement !== undefined) {
+      if (typeof replacement !== 'string' || !replacement)
+        return releaseError(
+          `Cargo source replacement for ${current} is invalid.`,
+          'EWORKSPACECONFIG',
+        );
+      current = replacement;
+      continue;
+    }
+    if (
+      typeof entry.registry !== 'string' ||
+      !entry.registry.startsWith('sparse+')
+    )
+      return releaseError(
+        `Cargo source ${current} must resolve to a sparse registry.`,
+        'EWORKSPACECONFIG',
+      );
+    return { names, index: url(entry.registry.slice(7)) };
+  }
+}
+
+function cargoPackageConfig(
+  configuration: Awaited<ReturnType<typeof cargoConfiguration>>,
+  index: string,
+) {
+  const selected = url(index.slice(7));
+  const sources = configuration.sources;
+  const configured = cargoSourceRoute(sources, 'crates-io');
+  if (configured && configured.index !== selected)
+    return releaseError(
+      'Configured Cargo crates-io source does not resolve to the selected registry.',
+      'EWORKSPACECONFIG',
+    );
+
+  const localSources = record(configuration.local.source)
+    ? configuration.local.source
+    : {};
+  const local = cargoSourceRoute(localSources, 'crates-io', false);
+  if (local && local.index !== selected)
+    return releaseError(
+      'Repository Cargo crates-io source does not resolve to the selected registry.',
+      'EWORKSPACECONFIG',
+    );
+
+  const source: Record<string, Record<string, string>> = {};
+  if (configured && !local) {
+    for (const [position, name] of configured.names.entries()) {
+      const replacement = configured.names[position + 1];
+      source[name] = replacement
+        ? { 'replace-with': replacement }
+        : { registry: index };
+    }
+  } else if (!configured) {
+    const chained = Object.entries(sources).find(
+      ([name, entry]) =>
+        name !== 'crates-io' &&
+        record(entry) &&
+        entry['replace-with'] !== undefined &&
+        typeof entry.registry === 'string' &&
+        entry.registry.startsWith('sparse+') &&
+        url(entry.registry.slice(7)) === selected,
+    )?.[0];
+    if (chained)
+      return releaseError(
+        `Cargo source ${chained} cannot select the registry and replace another source.`,
+        'EWORKSPACECONFIG',
+      );
+    const existing = Object.entries(sources).find(
+      ([name, entry]) =>
+        name !== 'crates-io' &&
+        record(entry) &&
+        entry['replace-with'] === undefined &&
+        typeof entry.registry === 'string' &&
+        entry.registry.startsWith('sparse+') &&
+        url(entry.registry.slice(7)) === selected,
+    )?.[0];
+    if (existing) {
+      source['crates-io'] = { 'replace-with': existing };
+      source[existing] = { registry: index };
+    } else source['crates-io'] = { registry: index };
+  }
+  return {
+    registries: { 'crates-io': { index } },
+    ...(Object.keys(source).length ? { source } : {}),
   };
-  return { home, global, local, registries };
 }
 export async function destination(
   context: VerifyConditionsContext,
@@ -161,11 +279,13 @@ export async function destination(
       'EWORKSPACECONFIG',
     );
   const configuration = await cargoConfiguration(context);
-  const defaultRegistry = record(configuration.local.registry)
-    ? configuration.local.registry.default
-    : record(configuration.global.registry)
+  const defaultRegistry =
+    (record(configuration.local.registry)
+      ? configuration.local.registry.default
+      : undefined) ??
+    (record(configuration.global.registry)
       ? configuration.global.registry.default
-      : undefined;
+      : undefined);
   const name =
     options.registry ??
     context.env?.CARGO_REGISTRY_DEFAULT ??
@@ -194,10 +314,13 @@ export async function destination(
       'Cargo publishing requires a named HTTP sparse registry. Configure its index in .cargo/config.toml or CARGO_REGISTRIES_<NAME>_INDEX.',
       'EWORKSPACECONFIG',
     );
+  const resolvedIndex = `${url(index.slice(7))}/`;
+  if (name === 'crates-io' && resolvedIndex !== 'https://index.crates.io/')
+    cargoPackageConfig(configuration, `sparse+${resolvedIndex}`);
   return {
     ecosystem: 'cargo',
     registry: name,
-    index: `${url(index.slice(7))}/`,
+    index: resolvedIndex,
     ...cargoPolicy(context, options, previous),
   };
 }
@@ -316,12 +439,10 @@ function npmArtifactManifest(
   dest: Destination,
 ): string {
   const value = JSON.parse(source) as Record<string, unknown>;
-  const edits: { field: string[]; value: string }[] = [
+  const edits: Edit[] = [
     { field: ['publishConfig', 'registry'], value: dest.registry },
     { field: ['publishConfig', 'tag'], value: dest.tag ?? 'latest' },
-    ...(dest.access
-      ? [{ field: ['publishConfig', 'access'], value: dest.access }]
-      : []),
+    { field: ['publishConfig', 'access'], value: dest.access ?? null },
   ];
   for (const section of [
     'dependencies',
@@ -369,13 +490,35 @@ function npmArtifactManifest(
       const update = pkg.dependencyUpdates.find(
         (entry) => entry.field[0] === section && entry.field[1] === name,
       );
-      range =
-        update?.publishedRange ??
-        (alias ? `npm:${target.name}@${range}` : range);
+      // Marker-free pending plans retain the packaging rules they froze.
+      if (
+        plan.dependencyPolicy === undefined ||
+        (!path && !['*', '^', '~'].includes(ref))
+      )
+        range = update?.publishedRange ?? range;
+      if ((alias || name !== target.name) && !range.startsWith('npm:'))
+        range = `npm:${target.name}@${range}`;
       edits.push({ field: [section, name], value: range });
     }
   }
   return editManifest('package.json', source, edits);
+}
+function cargoDependencyTables(data: Record<string, unknown>) {
+  return [
+    data,
+    ...(record(data.workspace) ? [data.workspace] : []),
+    ...(record(data.target) ? Object.values(data.target).filter(record) : []),
+  ];
+}
+function cargoDependencySections(data: Record<string, unknown>) {
+  return [
+    ['dependencies'],
+    ['build-dependencies', 'build_dependencies'],
+    ['dev-dependencies', 'dev_dependencies'],
+  ].flatMap((aliases) => {
+    const section = aliases.find((name) => data[name] !== undefined);
+    return section === undefined ? [] : [section];
+  });
 }
 export async function pack(
   context: VerifyConditionsContext,
@@ -427,8 +570,20 @@ export async function pack(
           directory,
         ],
       );
-      const result: unknown = JSON.parse(output.toString());
-      const entry = Array.isArray(result) ? result[0] : undefined;
+      let result: unknown;
+      try {
+        result = JSON.parse(output.toString());
+      } catch {
+        return releaseError('npm pack did not produce valid JSON output.');
+      }
+      const entry =
+        Array.isArray(result) && result.length === 1
+          ? result[0]
+          : record(result) &&
+              Object.keys(result).length === 1 &&
+              Object.hasOwn(result, pkg.name)
+            ? result[pkg.name]
+            : undefined;
       if (
         !record(entry) ||
         entry.name !== pkg.name ||
@@ -472,6 +627,47 @@ export async function pack(
   const source = join(directory, 'source');
   try {
     await stageSource(context, inventory.root, source, plan.head, true);
+    const original = parse(
+      (
+        await command(context, 'git', ['show', `${plan.head}:Cargo.toml`])
+      ).toString(),
+    );
+    const workspaceDependencies =
+      record(original.workspace) && record(original.workspace.dependencies)
+        ? original.workspace.dependencies
+        : {};
+    const member = inventory.packages.find(
+      (entry) => entry.ecosystem === 'cargo' && entry.name === pkg.name,
+    );
+    const runtimeWorkspaceDependencies = new Set<string>();
+    for (const table of cargoDependencyTables(member?.manifest ?? {}))
+      for (const section of cargoDependencySections(table)) {
+        if (section.startsWith('dev')) continue;
+        const deps = table[section];
+        if (!record(deps)) continue;
+        for (const [name, dep] of Object.entries(deps))
+          if (record(dep) && dep.workspace === true)
+            runtimeWorkspaceDependencies.add(name);
+      }
+    let stagedCratesIoIndex: string | undefined;
+    const routeStagedCratesIo = (target: Destination) => {
+      if (
+        target.ecosystem !== 'cargo' ||
+        target.registry !== 'crates-io' ||
+        target.index === undefined ||
+        target.index === 'https://index.crates.io/'
+      )
+        return;
+      if (
+        stagedCratesIoIndex !== undefined &&
+        stagedCratesIoIndex !== target.index
+      )
+        return releaseError(
+          'Staged Cargo dependencies select different crates-io indexes.',
+          'EWORKSPACECONFIG',
+        );
+      stagedCratesIoIndex = target.index;
+    };
     // Local path dependencies need a registry version even when this batch does not bump them.
     for (const path of new Set([
       'Cargo.toml',
@@ -481,24 +677,39 @@ export async function pack(
     ])) {
       const file = join(source, path);
       const data = parse(await readFile(file, 'utf8'));
-      const tables: Record<string, unknown>[] = [data];
-      if (record(data.workspace)) tables.push(data.workspace);
-      if (record(data.target))
-        for (const target of Object.values(data.target))
-          if (record(target)) tables.push(target);
+      const tables = cargoDependencyTables(data);
+      const omitted = new Set<string>();
       let changed = false;
       for (const table of tables)
-        for (const section of [
-          'dependencies',
-          'build-dependencies',
-          'build_dependencies',
-          'dev-dependencies',
-          'dev_dependencies',
-        ]) {
+        for (const section of cargoDependencySections(table)) {
           const deps = table[section];
           if (!record(deps)) continue;
-          for (const dep of Object.values(deps)) {
-            if (!record(dep) || typeof dep.path !== 'string') continue;
+          for (const [name, dep] of Object.entries(deps)) {
+            if (!record(dep)) continue;
+            const inherited =
+              dep.workspace === true ? workspaceDependencies[name] : dep;
+            if (
+              section.startsWith('dev') &&
+              record(inherited) &&
+              typeof inherited.path === 'string' &&
+              inherited.version === undefined
+            ) {
+              delete deps[name];
+              omitted.add(name);
+              changed = true;
+              continue;
+            }
+            if (typeof dep.path !== 'string') continue;
+            // Unused workspace definitions need no registry route. A sibling
+            // runtime user may have materialized a shared version during planning.
+            const declared = workspaceDependencies[name];
+            if (
+              table === data.workspace &&
+              record(declared) &&
+              declared.version === undefined &&
+              !runtimeWorkspaceDependencies.has(name)
+            )
+              continue;
             const target = inventory.packages.find(
               (entry) =>
                 entry.ecosystem === 'cargo' &&
@@ -521,10 +732,37 @@ export async function pack(
               config,
               target,
             );
-            dep.registry = targetDestination.registry;
+            routeStagedCratesIo(targetDestination);
+            if (
+              targetDestination.registry === 'crates-io' &&
+              targetDestination.index === 'https://index.crates.io/'
+            )
+              delete dep.registry;
+            else dep.registry = targetDestination.registry;
+            // Resolve the published dependency without loading an excluded local workspace member.
+            delete dep.path;
             changed = true;
           }
         }
+      if (omitted.size && record(data.features)) {
+        for (const table of tables)
+          if (table !== data.workspace)
+            for (const section of cargoDependencySections(table)) {
+              const deps = table[section];
+              if (record(deps))
+                for (const name of Object.keys(deps)) omitted.delete(name);
+            }
+        // Native Cargo removes feature references to dev dependencies omitted
+        // from publication, while retaining aliases still used by other tables.
+        for (const [name, values] of Object.entries(data.features))
+          if (Array.isArray(values))
+            data.features[name] = values.filter(
+              (value) =>
+                typeof value !== 'string' ||
+                !value.includes('/') ||
+                !omitted.has(value.split('/')[0]?.replace(/\?$/, '') ?? ''),
+            );
+      }
       if (changed) await writeFile(file, stringify(data));
     }
     const workspaceFile = join(source, 'Cargo.toml');
@@ -533,12 +771,13 @@ export async function pack(
       workspace.workspace.members = pkg.path === '.' ? [] : [pkg.path];
       workspace.workspace['default-members'] =
         pkg.path === '.' ? ['.'] : [pkg.path];
-      // Keep unrelated packages out of native Cargo's workspace-wide resolution.
+      // Isolate unrelated crates, but let ancestor manifests inherit from this root.
       workspace.workspace.exclude = inventory.packages
         .filter(
           (entry) =>
             entry.ecosystem === 'cargo' &&
             entry.path !== pkg.path &&
+            !pkg.path.startsWith(`${entry.path}/`) &&
             entry.path !== '.',
         )
         .map((entry) => entry.path);
@@ -547,11 +786,39 @@ export async function pack(
     }
     const local = { ...context, cwd: join(source, pkg.path) };
     // Explicit registry selection is also used for resolving staged internal dependencies.
+    const customCratesIo =
+      dest.registry === 'crates-io' &&
+      typeof dest.index === 'string' &&
+      dest.index !== 'https://index.crates.io/';
+    if (
+      customCratesIo &&
+      stagedCratesIoIndex !== undefined &&
+      stagedCratesIoIndex !== dest.index
+    )
+      return releaseError(
+        'The Cargo package and its staged dependencies select different crates-io indexes.',
+        'EWORKSPACECONFIG',
+      );
+    const routeIndex = customCratesIo ? dest.index : stagedCratesIoIndex;
+    const cargoIndex = routeIndex ? `sparse+${routeIndex}` : undefined;
+    let cargoConfig: string | undefined;
+    if (cargoIndex) {
+      const configuration = await cargoConfiguration(context);
+      cargoConfig = join(directory, 'cargo-config.toml');
+      await writeFile(
+        cargoConfig,
+        stringify(cargoPackageConfig(configuration, cargoIndex)),
+      );
+    }
     const args = [
       'package',
       '--allow-dirty',
       '--registry',
       dest.registry,
+      // Cargo resolves a staged `registry = "crates-io"` dependency through
+      // its source table. Keep a selected noncanonical crates.io destination
+      // available for this subprocess without relying on the caller's home.
+      ...(cargoConfig ? ['--config', cargoConfig] : []),
       '--target-dir',
       join(directory, 'target'),
     ];

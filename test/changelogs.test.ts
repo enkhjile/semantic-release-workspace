@@ -69,6 +69,7 @@ async function workspace() {
     pluginConfig: {
       publish: true,
       changelog: true,
+      synchronizeDependents: true,
       npm: { registry: service.url },
       cargo: { registry: 'fixture' },
     },
@@ -212,7 +213,11 @@ test('changelogs are opt-in and publish:false leaves the preview files absent', 
   const { repo, service, settings } = await workspace();
   change(repo, 'packages/lib/index.js', 'feat: optional changelog');
   const preview = repo.run({
-    pluginConfig: { publish: false, changelog: true },
+    pluginConfig: {
+      publish: false,
+      changelog: true,
+      synchronizeDependents: true,
+    },
   });
   expect(preview.ok, preview.logs).toBe(true);
   expect(repo.state().planning.releaseNotes.changelogs).toHaveLength(2);

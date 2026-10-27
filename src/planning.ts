@@ -66,6 +66,12 @@ export async function createVersionPlan(
     (await git(context, 'rev-list', '--topo-order', current.head)).split('\n'),
   );
   const versions = new Map<string, PackageVersion>();
+  const knownVersions = new Map<string, Set<string>>();
+  const rememberVersion = (id: string, version: string) => {
+    const known = knownVersions.get(id) ?? new Set<string>();
+    known.add(version);
+    knownVersions.set(id, known);
+  };
   const projections = new Map<
     string,
     import('./plan-types.js').DependencyUpdate
@@ -74,6 +80,7 @@ export async function createVersionPlan(
     if (!ancestors.has(entry.head)) continue;
     for (const version of entry.planning?.versions ?? []) {
       if (!eligible(version.version)) continue;
+      rememberVersion(version.id, version.version);
       const previous = versions.get(version.id);
       if (!previous || gt(version.version, previous.version))
         versions.set(version.id, version);
@@ -109,13 +116,33 @@ export async function createVersionPlan(
           candidate.head === version.head,
       ),
     );
-    for (const update of carrier?.planning?.plan.packages.find(
+    const previousPackage = carrier?.planning?.plan.packages.find(
       (pkg) => pkg.id === version.id,
-    )?.dependencyUpdates ?? [])
+    );
+    if (!previousPackage) continue;
+    const currentPackage = inventory.packages.find(
+      (pkg) => packageId(pkg) === version.id,
+    );
+    const file =
+      previousPackage.ecosystem === 'npm' ? 'package.json' : 'Cargo.toml';
+    const previousManifest = `${previousPackage.path === '.' ? '' : `${previousPackage.path}/`}${file}`;
+    for (const update of previousPackage.dependencyUpdates) {
+      // Only package-owned fields follow a move. Shared Cargo workspace
+      // dependencies remain in the root manifest, even for a former root crate.
+      const projection =
+        currentPackage &&
+        update.manifestPath === previousManifest &&
+        update.field[0] !== 'workspace'
+          ? {
+              ...update,
+              manifestPath: `${currentPackage.path === '.' ? '' : `${currentPackage.path}/`}${file}`,
+            }
+          : update;
       projections.set(
-        JSON.stringify([update.manifestPath, update.field]),
-        update,
+        JSON.stringify([projection.manifestPath, projection.field]),
+        projection,
       );
+    }
   }
   const packages: PackagePlan[] = [];
   const baselines: {
@@ -135,6 +162,7 @@ export async function createVersionPlan(
       if (!tag.startsWith(prefix)) continue;
       const candidate = tag.slice(prefix.length);
       if (valid(candidate) !== candidate || !eligible(candidate)) continue;
+      rememberVersion(id, candidate);
       if (taggedVersion === undefined || gt(candidate, taggedVersion)) {
         taggedVersion = candidate;
         tagHead = await git(context, 'rev-parse', `refs/tags/${tag}^{commit}`);
@@ -184,6 +212,10 @@ export async function createVersionPlan(
       dependencyUpdates: [],
     });
   }
+  const legacyPending =
+    current.journal?.status === 'pending' &&
+    current.journal.planning !== undefined &&
+    current.journal.planning.plan.dependencyPolicy === undefined;
   const coordinated = coordinateDependencies(
     inventory,
     packages,
@@ -192,6 +224,9 @@ export async function createVersionPlan(
       ? current.journal.planning?.dependencyRanges
       : [...projections.values()],
     (version, type) => nextPackageVersion(context, version, type),
+    config.synchronizeDependents === true,
+    config.synchronizeDependents === true && !legacyPending,
+    knownVersions,
   );
   checkPackageBranches(
     context,
@@ -229,6 +264,17 @@ export async function createVersionPlan(
     baseHead: baseline(current),
     packages,
     groups: coordinated.groups,
+    ...(!legacyPending
+      ? {
+          dependencyPolicy:
+            config.synchronizeDependents === true
+              ? ('synchronize' as const)
+              : ('independent' as const),
+        }
+      : {}),
+    ...(coordinated.stagingDependencies.length
+      ? { stagingDependencies: coordinated.stagingDependencies }
+      : {}),
   };
   if (
     current.journal?.status === 'pending' &&

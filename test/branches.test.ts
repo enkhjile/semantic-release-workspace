@@ -13,7 +13,7 @@ afterEach(() => {
 });
 const branches = ['main', { name: 'beta', prerelease: true }];
 function workspace() {
-  const repo = fixture();
+  const repo = fixture({ synchronizeDependents: true });
   writeFileSync(
     join(repo.cwd, 'package.json'),
     JSON.stringify({ private: true, workspaces: ['packages/*'] }),
@@ -536,7 +536,7 @@ test('dry-run rejects a package version already tagged on an unmerged branch', (
 });
 
 test('Cargo maintenance releases coordinate dependencies on the older release line', async () => {
-  const repo = fixture();
+  const repo = fixture({ synchronizeDependents: true });
   const service = await registry();
   mkdirSync(join(repo.cwd, '.cargo'));
   writeFileSync(
