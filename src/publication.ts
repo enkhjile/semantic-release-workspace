@@ -35,6 +35,7 @@ import {
   retainArtifact,
 } from './release-io.js';
 import { notesForRelease } from './release-notes.js';
+import { record } from './workspace-files.js';
 
 type Planning = PlanningState & {
   current: Awaited<ReturnType<typeof snapshot>>;
@@ -43,6 +44,25 @@ export function publishing(config: Record<string, unknown>): boolean {
   if (config.publish !== undefined && typeof config.publish !== 'boolean')
     return releaseError('publish must be a boolean.', 'EWORKSPACECONFIG');
   return config.publish !== false;
+}
+export function npmVisibilityTimeout(config: Record<string, unknown>): number {
+  const options = config.npm;
+  if (options !== undefined && !record(options))
+    return releaseError('npm must be an object.', 'EWORKSPACECONFIG');
+  const timeout =
+    options?.visibilityTimeout === undefined
+      ? 300_000
+      : options.visibilityTimeout;
+  if (
+    !Number.isSafeInteger(timeout) ||
+    typeof timeout !== 'number' ||
+    timeout < 0
+  )
+    return releaseError(
+      'npm.visibilityTimeout must be a nonnegative integer in milliseconds.',
+      'EWORKSPACECONFIG',
+    );
+  return timeout;
 }
 function tagName(id: string, version: string): string {
   return `${id.replace(':', '/')}@${version}`;
@@ -443,25 +463,37 @@ export async function publishPackages(
             'A previously published package is missing from its registry.',
             'EWORKSPACECONFLICT',
           );
-        entry.intent = true;
-        await persist();
         let failure: unknown;
-        try {
-          await upload(
-            context,
-            entry.destination,
-            artifact.bytes,
-            artifact.metadata,
-            entry.destination.cargoAuth === 'oidc'
-              ? await cargoIdentity.token(entry.destination)
-              : undefined,
-          );
-        } catch (error) {
-          failure = error;
+        if (!entry.acknowledged) {
+          entry.intent = true;
+          await persist();
+          let uploaded = false;
+          try {
+            await upload(
+              context,
+              entry.destination,
+              artifact.bytes,
+              artifact.metadata,
+              entry.destination.cargoAuth === 'oidc'
+                ? await cargoIdentity.token(entry.destination)
+                : undefined,
+            );
+            uploaded = true;
+          } catch (error) {
+            failure = error;
+          }
+          if (uploaded && entry.destination.ecosystem === 'npm') {
+            // Record the receipt before waiting so another runner will not upload again.
+            entry.acknowledged = true;
+            await persist();
+          }
         }
-        // A successful response may precede Cargo index visibility; only a checksum is proof.
+        // A successful upload can precede registry visibility; only a matching artifact is proof.
         let confirmed: string | null = null;
-        for (let attempt = 0; attempt < 5; attempt++) {
+        const deadline = performance.now() + npmVisibilityTimeout(config);
+        let delay = 250;
+        let attempt = 0;
+        while (true) {
           confirmed = await probe(
             context,
             entry.destination,
@@ -469,12 +501,23 @@ export async function publishPackages(
             artifact.metadata,
           );
           if (confirmed !== null) break;
-          if (attempt < 4)
-            await new Promise((resolve) =>
-              setTimeout(resolve, 250 * 2 ** attempt),
-            );
+          const remaining = deadline - performance.now();
+          if (entry.acknowledged ? remaining <= 0 : attempt >= 4) break;
+          await new Promise((resolve) =>
+            setTimeout(
+              resolve,
+              entry.acknowledged ? Math.min(delay, remaining) : delay,
+            ),
+          );
+          delay = Math.min(delay * 2, 10_000);
+          attempt++;
         }
         if (confirmed !== expected) {
+          if (confirmed !== null)
+            return releaseError(
+              `Registry version conflicts with this batch: ${pkg.id}@${pkg.nextVersion}.`,
+              'EWORKSPACECONFLICT',
+            );
           if (failure) throw failure;
           return releaseError(
             `Publication cannot yet be confirmed: ${pkg.id}. Retry this same batch.`,

@@ -382,6 +382,19 @@ const handler = async (req, res) => {
   const name = path.slice(1);
   const versions = state.npm[name];
   if (!versions) return json({ error: 'not found' }, 404);
+  // Accept the upload immediately while delaying only public version metadata.
+  // Count subsequent package reads so tests exercise real polling and retries.
+  if (controlValue === 'hide-npm' || controlValue.startsWith('hide-npm:')) {
+    state.npmVisibilityReads ??= {};
+    const reads = (state.npmVisibilityReads[name] ?? 0) + 1;
+    state.npmVisibilityReads[name] = reads;
+    writeFileSync(stateFile, JSON.stringify(state));
+    if (
+      controlValue === 'hide-npm' ||
+      reads <= Number(controlValue.slice('hide-npm:'.length))
+    )
+      return json({ name, 'dist-tags': {}, versions: {} });
+  }
   return json({
     name,
     'dist-tags': state.npmTags[name],

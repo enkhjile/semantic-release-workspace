@@ -25,6 +25,7 @@ export interface PublicationPackage {
   destination: Destination;
   artifact?: Artifact;
   intent: boolean;
+  acknowledged?: boolean;
   published: boolean;
   tagged: boolean;
 }
@@ -80,7 +81,11 @@ export function validExecution(value: unknown): value is Execution {
       if (
         (entry.tagged && !entry.published) ||
         (entry.published && !entry.intent) ||
-        (entry.intent && !entry.artifact)
+        (entry.intent && !entry.artifact) ||
+        (entry.acknowledged !== undefined &&
+          (typeof entry.acknowledged !== 'boolean' ||
+            entry.destination.ecosystem !== 'npm' ||
+            (entry.acknowledged && !entry.intent)))
       )
         return false;
       if (

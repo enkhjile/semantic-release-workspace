@@ -279,6 +279,7 @@ const pluginOptions = {
     tag: 'latest',
     trustedPublishing: 'auto',
     provenance: 'auto',
+    visibilityTimeout: 300000,
   },
 };
 ```
@@ -296,6 +297,14 @@ registry requests reject redirects outside the frozen scheme, host, and port.
 Artifact manifests convert workspace/local references to publishable ranges;
 prepared manifests retain workspace protocols. Packing uses isolated Git-aware
 copies with installed build tools and native ignore selection.
+
+After an npm upload succeeds, the plugin polls for version metadata for up to
+`npm.visibilityTimeout` milliseconds; individual registry requests may run
+beyond that period. The default is `300000` (five minutes). Once visible, its
+integrity and, when enabled, provenance must match the retained artifact.
+Missing or mismatched provenance fails immediately. If waiting times out, rerun
+the same batch; a fresh clone can resume waiting using the recorded upload
+acknowledgment without uploading the artifact again.
 
 ### Trusted publishing and provenance
 
@@ -502,8 +511,11 @@ Artifacts are retained in Git before upload intent and limited to **100 MiB each
 An existing registry version is accepted only with matching retained bytes and
 this batch's recorded upload intent. Foreign versions, checksum mismatches,
 missing/corrupt artifacts, changed policy, and conflicting tags stop recovery.
-Accepted uploads with lost responses and failed tag pushes can be reconciled
-without another upload; rejected uploads reuse artifacts with fresh credentials.
+Visible accepted uploads and failed tag pushes can be reconciled without another
+upload; rejected uploads reuse artifacts with fresh credentials. If the upload
+response is lost or the process crashes before recording its acknowledgment, a
+retry may upload the same retained artifact again when the version is not yet
+visible.
 Published versions are irreversible: recovery completes remaining work without
 rolling back registry releases.
 
