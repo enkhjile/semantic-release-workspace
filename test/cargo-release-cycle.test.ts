@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 test('Cargo starts a new coordinated prerelease after stable promotion and backmerge', async () => {
-  const repo = fixture();
+  const repo = fixture({ synchronizeDependents: true });
   const service = await registry();
   const manifests: Record<string, string> = {
     '.cargo/config.toml': `[registries.fixture]\nindex = "sparse+${service.url}/cargo/index/"\n`,

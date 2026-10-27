@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 function workspace() {
-  const repo = fixture();
+  const repo = fixture({ synchronizeDependents: true });
   return {
     ...repo,
     file(path: string, content: string) {

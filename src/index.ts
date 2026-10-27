@@ -57,6 +57,14 @@ export async function verifyConditions(
     );
   }
   changelogEnabled(config);
+  if (
+    config.synchronizeDependents !== undefined &&
+    typeof config.synchronizeDependents !== 'boolean'
+  )
+    throw new SemanticReleaseError(
+      'synchronizeDependents must be a boolean.',
+      'EWORKSPACECONFIG',
+    );
   npmChannel(context.branch.channel);
   if (
     branchType(context) === 'prerelease' &&

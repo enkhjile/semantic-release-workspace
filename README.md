@@ -1,7 +1,7 @@
 # semantic-release-workspace
 
 Independent npm and Cargo package releases through semantic-release. The plugin
-finds workspace packages, attributes commits by changed files, coordinates local
+finds workspace packages, attributes commits by changed files, orders local
 dependencies, publishes package artifacts, and retains release state for retries
 from the same checkout or a fresh clone.
 
@@ -184,7 +184,22 @@ Each package retains its own unreleased commits across other packages' batches.
 Inherited Cargo versions are planned independently and written into prepared
 member manifests.
 
-npm and Cargo dependencies are coordinated separately, in dependency-first groups:
+npm and Cargo packages are released independently by default: a change to a
+dependency does not release an unchanged dependent. A published dependent can
+continue using its existing dependency version. If both packages are already
+selected for release, incompatible internal requirements are updated to the new
+dependency version. When only the dependent is released, ensure its existing
+dependency requirement is available on the registry. Local workspace references
+are converted to registry requirements when the dependent is packed.
+
+To automatically synchronize dependents, set `synchronizeDependents: true` in
+the plugin options:
+
+```js
+plugins: [['semantic-release-workspace', { synchronizeDependents: true }]];
+```
+
+This restores the earlier coordination policy:
 - Out-of-range runtime, optional, and Cargo build requirements force at least a
   patch release of the dependent; npm peer requirement changes force a major.
 - Dev-only updates appear in the plan without forcing a dependent release.
@@ -192,8 +207,11 @@ npm and Cargo dependencies are coordinated separately, in dependency-first group
   published crates, matching native Cargo behavior.
 - npm `workspace:` aliases/shorthands and `file:`/`link:` references track local
   versions. Optional declarations override duplicate normal dependencies.
-- Compatible ordinary npm semver requirements can select local packages;
-  incompatible registry requirements, registry aliases, and git/URL references
+- With synchronization enabled, ordinary npm semver dependencies can still be
+  treated as internal when their ranges match the workspace package's declared
+  source version or recorded release history, even if they no longer match its
+  latest released version. Requirements ahead of that version stay external.
+  Incompatible registry requirements, registry aliases and git/URL references
   remain external. Cargo registry-only and excluded/outside-workspace crates
   remain external.
 - Cargo bare `1.2.3` means caret compatibility; npm bare `1.2.3` is exact.
@@ -201,6 +219,20 @@ npm and Cargo dependencies are coordinated separately, in dependency-first group
   build dependencies receive a proposed version requirement.
 - Cycles settle without repeatedly incrementing a package. npm publication cycles
   use a stable order; Cargo publication cycles are rejected.
+
+The option must be a boolean and defaults to `false`. When upgrading with an
+unfinished batch created by an earlier version, set it to `true` to retry the
+original frozen plan before changing policies. The source branch is not modified;
+see the prepared manifests and package artifacts for release-time changes. Cargo
+may temporarily update an unchanged dependent's requirement in the prepared
+workspace so its path dependency resolves; that dependent is not published and
+the temporary requirement is not carried forward as its published dependency.
+If a later release publishes that dependent with its older pinned requirement,
+the prepared tag can contain a local path requirement that does not match the
+latest workspace package version. Cargo may then reject commands run against
+the entire tagged workspace; the published crate still uses the pinned registry
+dependency. Update the source requirement, or enable synchronization before
+the core release, if the tagged workspace must resolve as a whole.
 
 Coordinator batch versions are independent of package versions. The first batch
 is `workspace-v1.0.0`; single-default-branch operation uses a patch counter,

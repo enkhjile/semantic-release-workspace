@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import SemanticReleaseError from '@semantic-release/error';
-import { inc, satisfies, validRange } from 'semver';
+import { inc, ltr, satisfies, valid, validRange } from 'semver';
 import { packageId } from './attribution.js';
 import type {
   DependencyUpdate,
@@ -61,6 +61,8 @@ function npmEdges(
   inventory: WorkspaceInventory,
   plans: Map<string, PackagePlan>,
   project: Projection,
+  synchronizeDependents: boolean,
+  knownVersions: Map<string, Set<string>>,
 ): Edge[] {
   const edges: Edge[] = [];
   for (const section of [
@@ -136,12 +138,41 @@ function npmEdges(
       if (path) range = '*';
       if (!validRange(range))
         dependencyError(`Unsupported internal workspace reference: ${spec}`);
-      if (!satisfies(current, range, { includePrerelease: true })) {
+      const sourceVersion = target.manifest.version;
+      const sourceRange = rawSpec.slice(
+        alias ? `workspace:${target.name}@`.length : 10,
+      );
+      const sourceCompatible =
+        protocol === 'workspace' &&
+        typeof sourceVersion === 'string' &&
+        valid(sourceVersion) &&
+        (path ||
+          ['*', '^', '~'].includes(sourceRange) ||
+          (validRange(sourceRange) &&
+            satisfies(sourceVersion, sourceRange, {
+              includePrerelease: true,
+            })));
+      if (
+        !satisfies(current, range, { includePrerelease: true }) &&
+        !sourceCompatible
+      ) {
         if (protocol === 'workspace')
           dependencyError(
             `Workspace dependency does not accept its current version: ${spec}`,
           );
-        continue; // An incompatible ordinary registry requirement does not select this workspace package.
+        if (
+          !synchronizeDependents ||
+          ltr(current, rawSpec, { includePrerelease: true }) ||
+          ![
+            ...(typeof sourceVersion === 'string' && valid(sourceVersion)
+              ? [sourceVersion]
+              : []),
+            ...(knownVersions.get(packageId(target)) ?? []),
+          ].some((version) =>
+            satisfies(version, rawSpec, { includePrerelease: true }),
+          )
+        )
+          continue; // The requirement selects an external registry version.
       }
       edges.push({
         owner: packageId(pkg),
@@ -333,7 +364,14 @@ export function coordinateDependencies(
     current,
     type,
   ) => (current ? inc(current, type) : '1.0.0'),
-): { groups: string[][]; dependencyRanges: DependencyUpdate[] } {
+  synchronizeDependents = false,
+  synchronizeIncompatible = synchronizeDependents,
+  knownVersions = new Map<string, Set<string>>(),
+): {
+  groups: string[][];
+  dependencyRanges: DependencyUpdate[];
+  stagingDependencies: DependencyUpdate[];
+} {
   const byId = new Map(packages.map((pkg) => [pkg.id, pkg]));
   const applied: { owner: string; update: DependencyUpdate }[] = [];
   const key = (manifestPath: string, field: string[]) =>
@@ -365,11 +403,18 @@ export function coordinateDependencies(
   };
   const edges = inventory.packages.flatMap((pkg) =>
     pkg.ecosystem === 'npm'
-      ? npmEdges(pkg, inventory, byId, project)
+      ? npmEdges(
+          pkg,
+          inventory,
+          byId,
+          project,
+          synchronizeIncompatible,
+          knownVersions,
+        )
       : cargoEdges(pkg, inventory, workspace, project),
   );
   const rank = { patch: 1, minor: 2, major: 3 };
-  let changed = true;
+  let changed = synchronizeDependents;
   while (changed) {
     changed = false;
     for (const edge of edges) {
@@ -401,12 +446,20 @@ export function coordinateDependencies(
       owner.dependencyUpdates.push(previous);
     }
   }
+  const staging = new Map<string, DependencyUpdate>();
   for (const edge of edges) {
     const target = byId.get(edge.target);
     const owner = byId.get(edge.owner);
     if (!target || !owner) continue;
     const proposed = update(edge, target);
     if (!proposed) continue;
+    if (!synchronizeDependents && !owner.type) {
+      // Keep the prepared Cargo workspace resolvable without releasing or
+      // carrying this temporary change forward as a published dependency.
+      if (edge.ecosystem === 'cargo')
+        staging.set(key(proposed.manifestPath, proposed.field), proposed);
+      continue;
+    }
     const index = owner.dependencyUpdates.findIndex(
       (entry) =>
         key(entry.manifestPath, entry.field) ===
@@ -418,5 +471,6 @@ export function coordinateDependencies(
   return {
     groups: groups(packages, edges),
     dependencyRanges: [...retained.values()],
+    stagingDependencies: [...staging.values()],
   };
 }
