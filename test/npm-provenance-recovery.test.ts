@@ -98,6 +98,79 @@ function withRegistryDefaults(bundle: Bundle): Bundle {
   return result;
 }
 
+test('real semantic-release recovers an acknowledged hidden OIDC upload without credentials, packing or signing again', async () => {
+  const { repo, service, signing, settings, packs } = await setup();
+  const timed = {
+    ...settings,
+    pluginConfig: {
+      ...settings.pluginConfig,
+      npm: { ...settings.pluginConfig.npm, visibilityTimeout: 0 },
+    },
+  };
+  service.control('hide-npm');
+  const initial = repo.run(timed);
+  expect(initial.ok).toBe(false);
+  expect(initial.codes).toContain('EWORKSPACEPUBLISH');
+  const pending = repo.state();
+  expect(pending.status).toBe('pending');
+  expect(pending.execution.packages[0]).toMatchObject({
+    intent: true,
+    acknowledged: true,
+    published: false,
+    tagged: false,
+  });
+  const artifact = pending.execution.packages[0].artifact;
+  const published = service.state().npm['@fixture/provenance-core']['1.1.0'];
+  const signingCalls = signing
+    .events()
+    .filter((path) => path.startsWith('/api/'));
+  expect(signingCalls.length).toBeGreaterThan(0);
+  expect(service.state().exchanges).toHaveLength(1);
+  expect(packs()).toBe('pack\n');
+
+  const withoutCI = {
+    ...timed,
+    env: { ...service.env, PACK_TRACE: settings.env.PACK_TRACE },
+  };
+  const hidden = repo.run(withoutCI, repo.clone('main', 'hidden-retry'));
+  expect(hidden.ok).toBe(false);
+  expect(hidden.codes).toContain('EWORKSPACEPUBLISH');
+  expect(repo.state().execution.packages[0].artifact).toEqual(artifact);
+  expect(service.state().uploads).toEqual([
+    'npm:@fixture/provenance-core@1.1.0',
+  ]);
+  expect(
+    service
+      .state()
+      .requests.filter((call: { method: string }) => call.method === 'PUT'),
+  ).toHaveLength(1);
+  expect(service.state().exchanges).toHaveLength(1);
+  expect(signing.events().filter((path) => path.startsWith('/api/'))).toEqual(
+    signingCalls,
+  );
+  expect(packs()).toBe('pack\n');
+
+  service.control('');
+  const recovered = repo.run(withoutCI, repo.clone('main', 'visible-retry'));
+  expect(recovered.ok, recovered.logs).toBe(true);
+  expect(repo.state().status).toBe('complete');
+  expect(repo.state().execution.packages[0].artifact).toEqual(artifact);
+  expect(service.state().npm['@fixture/provenance-core']['1.1.0']).toEqual(
+    published,
+  );
+  expect(
+    service
+      .state()
+      .requests.filter((call: { method: string }) => call.method === 'PUT'),
+  ).toHaveLength(1);
+  expect(service.state().exchanges).toHaveLength(1);
+  expect(signing.events().filter((path) => path.startsWith('/api/'))).toEqual(
+    signingCalls,
+  );
+  expect(packs()).toBe('pack\n');
+  expect(repo.tags()).toContain('npm/@fixture/provenance-core@1.1.0');
+});
+
 test('real semantic-release recovers an accepted npm OIDC upload with registry ProtoJSON defaults without repacking or resigning', async () => {
   const { repo, service, signing, settings, packs, setBundle, manifest } =
     await setup();

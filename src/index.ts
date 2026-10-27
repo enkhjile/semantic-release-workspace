@@ -28,6 +28,7 @@ import {
 } from './journal.js';
 import { createVersionPlan } from './planning.js';
 import {
+  npmVisibilityTimeout,
   preflight,
   preparePublication,
   publishing,
@@ -57,6 +58,7 @@ export async function verifyConditions(
     );
   }
   changelogEnabled(config);
+  npmVisibilityTimeout(config);
   if (
     config.synchronizeDependents !== undefined &&
     typeof config.synchronizeDependents !== 'boolean'
