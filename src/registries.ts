@@ -490,7 +490,12 @@ function npmArtifactManifest(
       const update = pkg.dependencyUpdates.find(
         (entry) => entry.field[0] === section && entry.field[1] === name,
       );
-      range = update?.publishedRange ?? range;
+      // Marker-free pending plans retain the packaging rules they froze.
+      if (
+        plan.dependencyPolicy === undefined ||
+        (!path && !['*', '^', '~'].includes(ref))
+      )
+        range = update?.publishedRange ?? range;
       if ((alias || name !== target.name) && !range.startsWith('npm:'))
         range = `npm:${target.name}@${range}`;
       edits.push({ field: [section, name], value: range });

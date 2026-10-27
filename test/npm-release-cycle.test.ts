@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 test('npm resumes alpha releases after stable promotion and backmerge, coordinating exact dependencies', async () => {
-  const repo = fixture();
+  const repo = fixture({ synchronizeDependents: true });
   const service = await registry();
   const settings = {
     branches: ['main', { name: 'alpha', prerelease: true }],

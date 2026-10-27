@@ -18,7 +18,7 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 function setup() {
-  const f = fixture();
+  const f = fixture({ synchronizeDependents: true });
   function file(path: string, content: string) {
     mkdirSync(join(f.cwd, path, '..'), { recursive: true });
     writeFileSync(join(f.cwd, path), content);

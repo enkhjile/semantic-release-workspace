@@ -69,6 +69,7 @@ async function workspace() {
     pluginConfig: {
       publish: true,
       changelog: true,
+      synchronizeDependents: true,
       npm: { registry: service.url },
       cargo: { registry: 'fixture' },
     },

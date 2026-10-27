@@ -204,6 +204,10 @@ export async function createVersionPlan(
       dependencyUpdates: [],
     });
   }
+  const legacyPending =
+    current.journal?.status === 'pending' &&
+    current.journal.planning !== undefined &&
+    current.journal.planning.plan.dependencyPolicy === undefined;
   const coordinated = coordinateDependencies(
     inventory,
     packages,
@@ -212,6 +216,8 @@ export async function createVersionPlan(
       ? current.journal.planning?.dependencyRanges
       : [...projections.values()],
     (version, type) => nextPackageVersion(context, version, type),
+    config.synchronizeDependents === true,
+    config.synchronizeDependents === true && !legacyPending,
   );
   checkPackageBranches(
     context,
@@ -249,6 +255,17 @@ export async function createVersionPlan(
     baseHead: baseline(current),
     packages,
     groups: coordinated.groups,
+    ...(!legacyPending
+      ? {
+          dependencyPolicy:
+            config.synchronizeDependents === true
+              ? ('synchronize' as const)
+              : ('independent' as const),
+        }
+      : {}),
+    ...(coordinated.stagingDependencies.length
+      ? { stagingDependencies: coordinated.stagingDependencies }
+      : {}),
   };
   if (
     current.journal?.status === 'pending' &&

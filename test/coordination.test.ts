@@ -42,6 +42,9 @@ function coordinate(
     { root: '/repo', source: 'mixed', packages },
     plans,
     {},
+    undefined,
+    undefined,
+    true,
   );
   return { packages, plans, result };
 }
@@ -87,6 +90,9 @@ test('optional npm dependencies override duplicate dependency declarations', () 
     { root: '/repo', source: 'package.json', packages },
     plans,
     {},
+    undefined,
+    undefined,
+    true,
   );
   expect(plans[1]?.nextVersion).toBeNull();
 });

@@ -49,8 +49,13 @@ even when another package completes a batch in the meantime.
 
 [Planning](../src/planning.ts) selects eligible completed ancestor versions and
 reachable package tags before falling back to declared manifest versions.
-[Dependency coordination](../src/dependencies.ts) increases release types to a
-fixed point, calculating versions from the original package baseline.
+[Dependency coordination](../src/dependencies.ts) orders releases by local
+dependencies. By default it does not select an unchanged dependent for release;
+requirements can still be updated when both packages are already selected.
+Temporary Cargo staging edits can keep the prepared workspace resolvable when
+the dependency is in the current batch, without becoming published dependency
+projections. With `synchronizeDependents: true`, it increases release
+types to a fixed point, calculating versions from the original package baseline.
 Runtime/build/optional incompatibility requires at least a patch; npm peer
 incompatibility requires a major; dev-only updates do not force a release.
 Strongly connected components provide deterministic dependency-first groups
