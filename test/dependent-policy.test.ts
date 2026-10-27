@@ -539,3 +539,80 @@ test('a legacy pending core-only plan replays without selecting an external npm 
   expect(service.state().uploads).toEqual(['npm:core@1.1.0']);
   expect(repo.tags()).not.toContain('npm/app@1.0.1');
 });
+
+test('synchronization recognizes a previously published internal version without capturing an external range', async () => {
+  const repo = fixture();
+  const service = await registry();
+  const settings = {
+    env: service.env,
+    pluginConfig: { publish: true, npm: { registry: service.url } },
+  };
+  writeFileSync(
+    join(repo.cwd, 'package.json'),
+    JSON.stringify({ private: true, workspaces: ['packages/*'] }),
+  );
+  for (const [name, dependency] of [
+    ['core', undefined],
+    ['app', '^1.0.0'],
+    ['external', '^9.0.0'],
+  ]) {
+    const dir = join(repo.cwd, 'packages', name as string);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({
+        name,
+        version: '1.0.0',
+        ...(dependency ? { dependencies: { core: dependency } } : {}),
+      }),
+    );
+    writeFileSync(join(dir, 'index.js'), 'export const value = 1;\n');
+  }
+  repo.git(repo.cwd, 'add', '.');
+  repo.commit('feat: add packages');
+  let result = repo.run(settings);
+  expect(result.ok, result.logs).toBe(true);
+  expect(service.state().uploads).toEqual([
+    'npm:core@1.1.0',
+    'npm:app@1.1.0',
+    'npm:external@1.1.0',
+  ]);
+  writeFileSync(
+    join(repo.cwd, 'packages/core/index.js'),
+    'export const value = 2;\n',
+  );
+  repo.git(repo.cwd, 'add', '.');
+  repo.commit('feat: update core independently');
+  result = repo.run(settings);
+  expect(result.ok, result.logs).toBe(true);
+  expect(service.state().uploads.slice(3)).toEqual(['npm:core@1.2.0']);
+  writeFileSync(
+    join(repo.cwd, 'packages/app/package.json'),
+    JSON.stringify({
+      name: 'app',
+      version: '1.0.0',
+      dependencies: { core: '1.1.0' },
+    }),
+  );
+  repo.git(repo.cwd, 'add', '.');
+  repo.commit('chore: pin app to earlier core');
+  writeFileSync(
+    join(repo.cwd, 'packages/core/index.js'),
+    'export const value = 3;\n',
+  );
+  repo.git(repo.cwd, 'add', '.');
+  repo.commit('fix: update core with synchronization');
+  result = repo.run({
+    ...settings,
+    pluginConfig: { ...settings.pluginConfig, synchronizeDependents: true },
+  });
+  expect(result.ok, result.logs).toBe(true);
+  expect(service.state().uploads.slice(4)).toEqual([
+    'npm:core@1.2.1',
+    'npm:app@1.1.1',
+  ]);
+  expect(service.state().npm.app['1.1.1'].metadata.dependencies).toEqual({
+    core: '1.2.1',
+  });
+  expect(repo.tags()).not.toContain('npm/external@1.1.1');
+});

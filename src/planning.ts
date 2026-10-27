@@ -66,6 +66,12 @@ export async function createVersionPlan(
     (await git(context, 'rev-list', '--topo-order', current.head)).split('\n'),
   );
   const versions = new Map<string, PackageVersion>();
+  const knownVersions = new Map<string, Set<string>>();
+  const rememberVersion = (id: string, version: string) => {
+    const known = knownVersions.get(id) ?? new Set<string>();
+    known.add(version);
+    knownVersions.set(id, known);
+  };
   const projections = new Map<
     string,
     import('./plan-types.js').DependencyUpdate
@@ -74,6 +80,7 @@ export async function createVersionPlan(
     if (!ancestors.has(entry.head)) continue;
     for (const version of entry.planning?.versions ?? []) {
       if (!eligible(version.version)) continue;
+      rememberVersion(version.id, version.version);
       const previous = versions.get(version.id);
       if (!previous || gt(version.version, previous.version))
         versions.set(version.id, version);
@@ -155,6 +162,7 @@ export async function createVersionPlan(
       if (!tag.startsWith(prefix)) continue;
       const candidate = tag.slice(prefix.length);
       if (valid(candidate) !== candidate || !eligible(candidate)) continue;
+      rememberVersion(id, candidate);
       if (taggedVersion === undefined || gt(candidate, taggedVersion)) {
         taggedVersion = candidate;
         tagHead = await git(context, 'rev-parse', `refs/tags/${tag}^{commit}`);
@@ -218,6 +226,7 @@ export async function createVersionPlan(
     (version, type) => nextPackageVersion(context, version, type),
     config.synchronizeDependents === true,
     config.synchronizeDependents === true && !legacyPending,
+    knownVersions,
   );
   checkPackageBranches(
     context,

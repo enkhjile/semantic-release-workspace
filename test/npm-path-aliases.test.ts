@@ -21,7 +21,7 @@ test.each(
 )(
   'publishes $protocol aliases with the target identity (target changed: $changed)',
   async ({ protocol, changed }) => {
-    const repo = fixture();
+    const repo = fixture({ synchronizeDependents: true });
     const service = await registry();
     const file = (path: string, value: string) => {
       mkdirSync(join(repo.cwd, path, '..'), { recursive: true });

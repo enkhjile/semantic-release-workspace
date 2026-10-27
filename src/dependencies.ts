@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import SemanticReleaseError from '@semantic-release/error';
-import { inc, satisfies, valid, validRange } from 'semver';
+import { inc, ltr, satisfies, valid, validRange } from 'semver';
 import { packageId } from './attribution.js';
 import type {
   DependencyUpdate,
@@ -62,6 +62,7 @@ function npmEdges(
   plans: Map<string, PackagePlan>,
   project: Projection,
   synchronizeDependents: boolean,
+  knownVersions: Map<string, Set<string>>,
 ): Edge[] {
   const edges: Edge[] = [];
   for (const section of [
@@ -159,7 +160,19 @@ function npmEdges(
           dependencyError(
             `Workspace dependency does not accept its current version: ${spec}`,
           );
-        if (!synchronizeDependents) continue;
+        if (
+          !synchronizeDependents ||
+          ltr(current, rawSpec, { includePrerelease: true }) ||
+          ![
+            ...(typeof sourceVersion === 'string' && valid(sourceVersion)
+              ? [sourceVersion]
+              : []),
+            ...(knownVersions.get(packageId(target)) ?? []),
+          ].some((version) =>
+            satisfies(version, rawSpec, { includePrerelease: true }),
+          )
+        )
+          continue; // The requirement selects an external registry version.
       }
       edges.push({
         owner: packageId(pkg),
@@ -353,6 +366,7 @@ export function coordinateDependencies(
   ) => (current ? inc(current, type) : '1.0.0'),
   synchronizeDependents = false,
   synchronizeIncompatible = synchronizeDependents,
+  knownVersions = new Map<string, Set<string>>(),
 ): {
   groups: string[][];
   dependencyRanges: DependencyUpdate[];
@@ -389,7 +403,14 @@ export function coordinateDependencies(
   };
   const edges = inventory.packages.flatMap((pkg) =>
     pkg.ecosystem === 'npm'
-      ? npmEdges(pkg, inventory, byId, project, synchronizeIncompatible)
+      ? npmEdges(
+          pkg,
+          inventory,
+          byId,
+          project,
+          synchronizeIncompatible,
+          knownVersions,
+        )
       : cargoEdges(pkg, inventory, workspace, project),
   );
   const rank = { patch: 1, minor: 2, major: 3 };

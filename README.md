@@ -207,11 +207,13 @@ This restores the earlier coordination policy:
   published crates, matching native Cargo behavior.
 - npm `workspace:` aliases/shorthands and `file:`/`link:` references track local
   versions. Optional declarations override duplicate normal dependencies.
-- With synchronization enabled, ordinary npm semver dependencies matching a
-  workspace package name are treated as internal even if their ranges no longer
-  match its latest version. Registry aliases and git/URL references remain
-  external. Cargo registry-only and excluded/outside-workspace crates remain
-  external.
+- With synchronization enabled, ordinary npm semver dependencies can still be
+  treated as internal when their ranges match the workspace package's declared
+  source version or recorded release history, even if they no longer match its
+  latest released version. Requirements ahead of that version stay external.
+  Incompatible registry requirements, registry aliases and git/URL references
+  remain external. Cargo registry-only and excluded/outside-workspace crates
+  remain external.
 - Cargo bare `1.2.3` means caret compatibility; npm bare `1.2.3` is exact.
   Cargo comma-separated comparators intersect. Path-only Cargo runtime and
   build dependencies receive a proposed version requirement.

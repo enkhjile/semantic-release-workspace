@@ -97,6 +97,23 @@ test('optional npm dependencies override duplicate dependency declarations', () 
   expect(plans[1]?.nextVersion).toBeNull();
 });
 
+test('synchronization does not downgrade a requirement above the latest released version', () => {
+  const { packages, plans } = coordinate('npm', '^5.0.0', '2.1.0');
+  if (!packages[0] || !plans[0]) throw new Error('Missing library');
+  packages[0].manifest.version = '5.0.0';
+  plans[0].currentVersion = '2.0.0';
+  coordinateDependencies(
+    { root: '/repo', source: 'package.json', packages },
+    plans,
+    {},
+    undefined,
+    undefined,
+    true,
+  );
+  expect(plans[1]?.nextVersion).toBeNull();
+  expect(plans[1]?.dependencyUpdates).toEqual([]);
+});
+
 test.each(['workspace:missing@*', 'workspace:^9.0.0'])(
   'invalid explicit local reference fails: %s',
   (range) => {
