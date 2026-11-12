@@ -100,7 +100,7 @@ test('a packed plugin loads by its documented name through real semantic-release
   const released = run();
   expect(released.ok, released.logs).toBe(true);
   expect(released.result.nextRelease.notes).toContain('consumer-lib');
-  expect(released.result.nextRelease.notes).toContain('1.1.0');
+  expect(released.result.nextRelease.notes).toContain('1.0.0');
   expect(repo.tags()).toEqual(['workspace-v1.0.0']);
   expect(repo.git(repo.cwd, 'status', '--porcelain')).toBe('');
   const completed = repo.refs();

@@ -77,8 +77,8 @@ test('OIDC exchanges credentials separately for each package using real semantic
     service.state().exchanges.map((entry: { name: string }) => entry.name),
   ).toEqual(['@fixture/one', '@fixture/two']);
   expect(service.state().uploads).toEqual([
-    'npm:@fixture/one@1.1.0',
-    'npm:@fixture/two@1.1.0',
+    'npm:@fixture/one@1.0.0',
+    'npm:@fixture/two@1.0.0',
   ]);
   expect(JSON.stringify(repo.state())).not.toContain('secret');
   expect(repo.refs()).not.toContain('secret');
@@ -136,14 +136,14 @@ test('publishes a cryptographically verified provenance bundle using real semant
   expect(result.ok, result.logs).toBe(true);
   expect(signing.events()).toContain('/api/v2/signingCert');
   expect(signing.events()).toContain('/api/v1/log/entries');
-  const entry = service.state().npm['trusted-fixture']['1.1.0'];
+  const entry = service.state().npm['trusted-fixture']['1.0.0'];
   expect(entry.bundle.dsseEnvelope.payloadType).toBe(
     'application/vnd.in-toto+json',
   );
   const payload = JSON.parse(
     Buffer.from(entry.bundle.dsseEnvelope.payload, 'base64').toString(),
   );
-  expect(payload.subject[0].name).toBe('pkg:npm/trusted-fixture@1.1.0');
+  expect(payload.subject[0].name).toBe('pkg:npm/trusted-fixture@1.0.0');
   expect(
     payload.predicate.buildDefinition.resolvedDependencies[0].digest.gitCommit,
   ).toBe(settings.env.GITHUB_SHA);
@@ -198,7 +198,7 @@ test('fresh clone confirms an uncertain accepted upload with exact retained prov
   expect(failed.ok).toBe(false);
   expect(repo.state().status).toBe('pending');
   const artifact = repo.state().execution.packages[0].artifact;
-  const bundle = service.state().npm['@fixture/trusted']['1.1.0'].bundle;
+  const bundle = service.state().npm['@fixture/trusted']['1.0.0'].bundle;
   const calls = signingCalls(signing);
   service.control('');
   const result = repo.run(
@@ -206,11 +206,11 @@ test('fresh clone confirms an uncertain accepted upload with exact retained prov
     repo.clone(),
   );
   expect(result.ok, result.logs).toBe(true);
-  expect(service.state().uploads).toEqual(['npm:@fixture/trusted@1.1.0']);
+  expect(service.state().uploads).toEqual(['npm:@fixture/trusted@1.0.0']);
   expect(service.state().exchanges).toHaveLength(1);
   expect(signingCalls(signing)).toEqual(calls);
   expect(repo.state().execution.packages[0].artifact).toEqual(artifact);
-  expect(service.state().npm['@fixture/trusted']['1.1.0'].bundle).toEqual(
+  expect(service.state().npm['@fixture/trusted']['1.0.0'].bundle).toEqual(
     bundle,
   );
   const retained = repo.git(
@@ -251,7 +251,7 @@ test.each(['attestation-missing', 'attestation-corrupt', 'attestation-404'])(
     expect(service.state().uploads).toHaveLength(1);
     expect(service.state().exchanges).toHaveLength(1);
     expect(signingCalls(signing)).toEqual(calls);
-    expect(repo.tags()).not.toContain('npm/@fixture/trusted@1.1.0');
+    expect(repo.state().execution.packages[0].published).toBe(false);
   },
 );
 test('expired exchange credentials are rejected and a fresh-clone retry mints a new token', async () => {
@@ -437,7 +437,7 @@ test('GitLab publishes npm OIDC plus signed provenance with real semantic-releas
   expect(result.ok, result.logs).toBe(true);
   expect(service.state().exchanges).toHaveLength(1);
   expect(signingCalls(signing)).toHaveLength(2);
-  const bundle = service.state().npm['@fixture/trusted']['1.1.0'].bundle;
+  const bundle = service.state().npm['@fixture/trusted']['1.0.0'].bundle;
   const payload = JSON.parse(
     Buffer.from(bundle.dsseEnvelope.payload, 'base64').toString(),
   );
@@ -473,7 +473,7 @@ test('CircleCI supports OIDC with automatic provenance skipped, and rejects requ
   expect(result.ok, result.logs).toBe(true);
   expect(service.state().uploads).toHaveLength(1);
   expect(
-    service.state().npm['trusted-fixture']['1.1.0'].bundle,
+    service.state().npm['trusted-fixture']['1.0.0'].bundle,
   ).toBeUndefined();
 });
 test('auto provenance skips private GitLab projects without requesting a signing token', async () => {
@@ -530,8 +530,8 @@ test('existing public scoped packages can sign with access left unchanged', asyn
     },
   });
   expect(result.ok, result.logs).toBe(true);
-  expect(service.state().npm['@fixture/trusted']['1.1.0'].bundle).toBeDefined();
-  expect(service.state().npm['@fixture/trusted']['1.1.0'].access).toBeNull();
+  expect(service.state().npm['@fixture/trusted']['1.0.0'].bundle).toBeDefined();
+  expect(service.state().npm['@fixture/trusted']['1.0.0'].access).toBeNull();
 });
 test('pending token batches retain their authentication mode when retry CI gains OIDC', async () => {
   const { repo, service, settings } = await setup();
@@ -629,7 +629,7 @@ test('native npm provenance=false disables automatic signing without disabling O
   expect(service.state().exchanges).toHaveLength(1);
   expect(signing.events()).toEqual([]);
   expect(
-    service.state().npm['@fixture/trusted']['1.1.0'].bundle,
+    service.state().npm['@fixture/trusted']['1.0.0'].bundle,
   ).toBeUndefined();
 });
 test('explicit GitLab provenance validates signing-token availability during dry runs', async () => {

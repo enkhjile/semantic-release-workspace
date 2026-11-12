@@ -14,7 +14,10 @@ afterEach(() => {
 });
 
 test('Cargo starts a new coordinated prerelease after stable promotion and backmerge', async () => {
-  const repo = fixture({ synchronizeDependents: true });
+  const repo = fixture();
+  repo.commit('feat: establish shared baseline');
+  const baseline = repo.run();
+  expect(baseline.ok, baseline.logs).toBe(true);
   const service = await registry();
   const manifests: Record<string, string> = {
     '.cargo/config.toml': `[registries.fixture]\nindex = "sparse+${service.url}/cargo/index/"\n`,
@@ -61,14 +64,14 @@ test('Cargo starts a new coordinated prerelease after stable promotion and backm
     for (const [name, version] of [
       ['cycle-core', core],
       ['cycle-app', app],
-    ]) {
-      const tag = `cargo/${name}@${version}`;
+    ] as const) {
+      const tag = `workspace-v${version}`;
       expect(repo.tags()).toContain(tag);
       const taggedManifest = parse(
         repo.git(
           repo.remote,
           'show',
-          `${tag}:crates/${name === 'cycle-core' ? 'core' : 'app'}/Cargo.toml`,
+          `${repo.prepared(version)}:crates/${name === 'cycle-core' ? 'core' : 'app'}/Cargo.toml`,
         ),
       );
       expect(taggedManifest.package).toMatchObject({ name, version });
@@ -107,12 +110,12 @@ test('Cargo starts a new coordinated prerelease after stable promotion and backm
   repo.git(repo.cwd, 'checkout', '-b', 'alpha');
   repo.git(repo.cwd, 'push', '-u', 'origin', 'alpha');
   changeCore(2, 'feat: extend core');
-  await release('1.2.0-alpha.1', '1.1.1-alpha.1');
+  await release('1.2.0-alpha.1', '1.2.0-alpha.1');
 
   repo.git(repo.cwd, 'checkout', 'main');
   repo.git(repo.cwd, 'merge', '--no-ff', 'alpha', '-m', 'chore: promote alpha');
   repo.git(repo.cwd, 'push', 'origin', 'main');
-  await release('1.2.0', '1.1.1');
+  await release('1.2.0', '1.2.0');
   const stableHead = repo.git(repo.cwd, 'rev-parse', 'HEAD');
   repo.git(repo.cwd, 'checkout', 'alpha');
   repo.git(repo.cwd, 'merge', '--ff-only', 'main');
@@ -125,24 +128,23 @@ test('Cargo starts a new coordinated prerelease after stable promotion and backm
   const dry = repo.run({ ...settings, dryRun: true });
   expect(dry.ok, dry.logs).toBe(true);
   expect(JSON.stringify(dry.result)).toContain('1.2.1-alpha.1');
-  expect(JSON.stringify(dry.result)).toContain('1.1.2-alpha.1');
   expect(repo.refs()).toBe(refsBeforeDryRun);
   expect(service.state().uploads).toEqual(uploadsBeforeDryRun);
   unchanged();
-  await release('1.2.1-alpha.1', '1.1.2-alpha.1');
+  await release('1.2.1-alpha.1', '1.2.1-alpha.1');
   changeCore(4, 'fix: refine core after backmerge');
-  await release('1.2.1-alpha.2', '1.1.2-alpha.2');
+  await release('1.2.1-alpha.2', '1.2.1-alpha.2');
   expect(service.state().uploads).toEqual([
     'cargo:cycle-core@1.1.0',
     'cargo:cycle-app@1.1.0',
     'cargo:cycle-core@1.2.0-alpha.1',
-    'cargo:cycle-app@1.1.1-alpha.1',
+    'cargo:cycle-app@1.2.0-alpha.1',
     'cargo:cycle-core@1.2.0',
-    'cargo:cycle-app@1.1.1',
+    'cargo:cycle-app@1.2.0',
     'cargo:cycle-core@1.2.1-alpha.1',
-    'cargo:cycle-app@1.1.2-alpha.1',
+    'cargo:cycle-app@1.2.1-alpha.1',
     'cargo:cycle-core@1.2.1-alpha.2',
-    'cargo:cycle-app@1.1.2-alpha.2',
+    'cargo:cycle-app@1.2.1-alpha.2',
   ]);
   const refs = repo.refs();
   const uploads = service.state().uploads;

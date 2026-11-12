@@ -19,14 +19,14 @@ describe('real semantic-release lifecycle', { timeout: 60_000 }, () => {
     expect(outcome.ok, outcome.logs).toBe(true);
     expect(outcome.result).toMatchObject({
       nextRelease: {
-        type: 'patch',
+        type: 'minor',
         version: '1.0.0',
         gitTag: 'workspace-v1.0.0',
       },
     });
     expect(f.tags()).toEqual(['workspace-v1.0.0']);
     expect(f.state()).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       status: 'complete',
       head,
       baseHead: null,
@@ -47,7 +47,7 @@ describe('real semantic-release lifecycle', { timeout: 60_000 }, () => {
     expect(outcome.ok, outcome.logs).toBe(true);
     expect(outcome.result).toMatchObject({
       nextRelease: {
-        type: 'patch',
+        type: 'minor',
         gitTag: 'workspace-v1.0.0',
         notes: expect.stringContaining('preview workspace work'),
       },
@@ -104,21 +104,15 @@ describe('real semantic-release lifecycle', { timeout: 60_000 }, () => {
     });
     const clone = f.clone();
     const before = f.refs();
-    expect(f.run({ dryRun: true }, clone).result).toMatchObject({
-      nextRelease: {
-        version: '1.0.1',
-        notes: expect.stringContaining('retry this batch'),
-      },
-    });
+    const preview = f.run({ dryRun: true }, clone);
+    expect(preview.ok, preview.logs).toBe(true);
+    expect(preview.logs).toContain('Resuming frozen workspace release 1.0.0');
     expect(f.refs()).toBe(before);
     expect(f.state().status).toBe('pending');
     const retried = f.run({}, clone);
     expect(retried.ok, retried.logs).toBe(true);
-    expect(retried.result).toMatchObject({
-      commits: [],
-      nextRelease: { type: 'patch', gitTag: 'workspace-v1.0.1' },
-    });
-    expect(f.tags()).toEqual(['workspace-v1.0.0', 'workspace-v1.0.1']);
+    expect(retried.result).toBe(false);
+    expect(f.tags()).toEqual(['workspace-v1.0.0']);
     expect(f.state()).toMatchObject({
       status: 'complete',
       head,

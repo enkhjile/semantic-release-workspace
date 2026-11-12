@@ -21,7 +21,10 @@ afterEach(() => {
 });
 
 function workspace() {
-  const repo = fixture({ synchronizeDependents: true });
+  const repo = fixture();
+  repo.commit('feat: establish shared baseline');
+  const baseline = repo.run();
+  expect(baseline.ok, baseline.logs).toBe(true);
   return {
     ...repo,
     file(path: string, content: string) {
@@ -35,7 +38,7 @@ function workspace() {
   };
 }
 
-test('moved npm packages retain published dependency ranges through dry runs and fresh-clone retries until explicitly edited', async () => {
+test('moved npm packages retain shared dependency ranges through dry runs and fresh-clone retries until explicitly switched to a registry alias', async () => {
   const repo = workspace();
   const service = await registry();
   const settings = {
@@ -65,7 +68,7 @@ test('moved npm packages retain published dependency ranges through dry runs and
   repo.change('feat: replace library API\n\nBREAKING CHANGE: replace API');
   const first = repo.run(settings);
   expect(first.ok, first.logs).toBe(true);
-  expect((await publishedManifest('1.0.1')).dependencies.lib).toBe('2.0.0');
+  expect((await publishedManifest('2.0.0')).dependencies.lib).toBe('2.0.0');
 
   mkdirSync(join(repo.cwd, 'apps'));
   renameSync(join(repo.cwd, 'packages/app'), join(repo.cwd, 'apps/app'));
@@ -87,18 +90,19 @@ test('moved npm packages retain published dependency ranges through dry runs and
   expect(failed.codes, failed.logs).toContain('EWORKSPACEPUBLISH');
   const pending = repo.state();
   const artifact = pending.execution.packages.find(
-    (pkg: { id: string }) => pkg.id === 'npm:app',
+    (pkg: { id: string }) => pkg.id === 'npm:lib',
   ).artifact;
+  expect(artifact).toBeDefined();
   service.control('');
   const clone = repo.clone();
   const retry = repo.run(settings, clone);
   expect(retry.ok, retry.logs).toBe(true);
-  expect((await publishedManifest('1.0.2')).dependencies.lib).toBe('2.0.0');
+  expect((await publishedManifest('2.0.1')).dependencies.lib).toBe('2.0.1');
   expect(repo.state().planning.plan).toEqual(pending.planning.plan);
   expect(
     repo
       .state()
-      .execution.packages.find((pkg: { id: string }) => pkg.id === 'npm:app')
+      .execution.packages.find((pkg: { id: string }) => pkg.id === 'npm:lib')
       .artifact,
   ).toEqual(artifact);
   expect(readFileSync(join(clone, 'apps/app/package.json'), 'utf8')).toBe(
@@ -108,17 +112,19 @@ test('moved npm packages retain published dependency ranges through dry runs and
   expect(
     service
       .state()
-      .uploads.filter((value: string) => value === 'npm:app@1.0.2'),
+      .uploads.filter((value: string) => value === 'npm:app@2.0.1'),
   ).toHaveLength(1);
 
   repo.file(
     'apps/app/package.json',
-    '{"name":"app","version":"1.0.0","dependencies":{"lib":"^1.0.0"}}',
+    '{"name":"app","version":"1.0.0","dependencies":{"lib":"npm:lib@^1.0.0"}}',
   );
   repo.change('fix: explicitly select the earlier registry API');
   const edited = repo.run(settings, repo.clone('main', 'edited'));
   expect(edited.ok, edited.logs).toBe(true);
-  expect((await publishedManifest('1.0.3')).dependencies.lib).toBe('^1.0.0');
+  expect((await publishedManifest('2.0.2')).dependencies.lib).toBe(
+    'npm:lib@^1.0.0',
+  );
 });
 
 test('moving a Cargo package to the workspace root retains its own and shared dependency ranges in the published crate', async () => {
@@ -129,7 +135,7 @@ test('moving a Cargo package to the workspace root retains its own and shared de
     pluginConfig: { publish: true, cargo: { registry: 'fixture' } },
   };
   const packageSection =
-    '[package]\nname = "relocated-app"\nversion = "1.0.0"\nedition = "2024"\npublish = ["fixture"]\nlicense = "MIT"\ndescription = "fixture"\n';
+    '[package]\nname = "relocated-app"\nversion = "1.0.0"\nedition = "2024"\npublish = ["fixture"]\nlicense = "MIT"\ndescription = "fixture"\n\n[lib]\npath = "src/lib.rs"\n\n[features]\ndefault = []\n';
   const shared =
     '[workspace.dependencies]\nshared = { package = "shared-lib", path = "crates/shared", version = "=1.0.0", registry = "fixture" }\n';
   repo.file(
@@ -164,7 +170,7 @@ test('moving a Cargo package to the workspace root retains its own and shared de
   expect(service.state().uploads).toEqual([
     'cargo:local-lib@2.0.0',
     'cargo:shared-lib@2.0.0',
-    'cargo:relocated-app@1.0.1',
+    'cargo:relocated-app@2.0.0',
   ]);
 
   renameSync(join(repo.cwd, 'crates/app/src'), join(repo.cwd, 'src'));
@@ -178,26 +184,26 @@ test('moving a Cargo package to the workspace root retains its own and shared de
   const second = repo.run(settings, clone);
   expect(second.ok, second.logs).toBe(true);
   const artifact = Buffer.from(
-    service.state().cargo['relocated-app']['1.0.2'].artifact,
+    service.state().cargo['relocated-app']['2.0.1'].artifact,
     'base64',
   );
   const manifest = parse(
-    await archiveFile(artifact, 'relocated-app-1.0.2/Cargo.toml'),
+    await archiveFile(artifact, 'relocated-app-2.0.1/Cargo.toml'),
   );
   expect(manifest.dependencies).toMatchObject({
-    local: { version: '=2.0.0' },
-    shared: { version: '=2.0.0' },
+    local: { version: '=2.0.1' },
+    shared: { version: '=2.0.1' },
   });
   expect(
-    repo.git(repo.remote, 'show', 'cargo/relocated-app@1.0.2:Cargo.toml'),
-  ).toContain('version = "=2.0.0"');
+    repo.git(repo.remote, 'show', `${repo.prepared('2.0.1')}:Cargo.toml`),
+  ).toContain('version = "=2.0.1"');
   expect(readFileSync(join(clone, 'Cargo.toml'), 'utf8')).toContain(
     'version = "=1.0.0"',
   );
   expect(repo.git(clone, 'status', '--porcelain')).toBe('');
 });
 
-test('moving a root Cargo package keeps shared projections at the root and respects explicit source edits', () => {
+test('moving a root Cargo package keeps shared dependencies at the root and respects explicit registry-only edits', () => {
   const repo = workspace();
   const shared =
     '[workspace.dependencies]\nshared = { package = "lib", path = "crates/lib", version = "=1.0.0" }\n';
@@ -241,16 +247,16 @@ test('moving a root Cargo package keeps shared projections at the root and respe
         manifestPath: 'apps/app/Cargo.toml',
         field: ['dependencies', 'direct', 'version'],
         from: '=1.0.0',
-        to: '=2.0.0',
-        publishedRange: '=2.0.0',
+        to: '=2.0.1',
+        publishedRange: '=2.0.1',
       },
       {
         dependency: 'cargo:lib',
         manifestPath: 'Cargo.toml',
         field: ['workspace', 'dependencies', 'shared', 'version'],
         from: '=1.0.0',
-        to: '=2.0.0',
-        publishedRange: '=2.0.0',
+        to: '=2.0.1',
+        publishedRange: '=2.0.1',
       },
     ]),
   );
@@ -258,7 +264,10 @@ test('moving a root Cargo package keeps shared projections at the root and respe
 
   repo.file(
     'apps/app/Cargo.toml',
-    manifest.replace('version = "=1.0.0" }', 'version = "^1.0.0" }'),
+    manifest.replace(
+      'path = "../../crates/lib", version = "=1.0.0"',
+      'version = "^1.0.0"',
+    ),
   );
   repo.change('fix: explicitly select earlier registry API');
   const edited = repo.run({}, repo.clone('main', 'edited'));
@@ -272,7 +281,7 @@ test('moving a root Cargo package keeps shared projections at the root and respe
     {
       manifestPath: 'Cargo.toml',
       field: ['workspace', 'dependencies', 'shared', 'version'],
-      to: '=2.0.0',
+      to: '=2.0.2',
     },
   ]);
 });

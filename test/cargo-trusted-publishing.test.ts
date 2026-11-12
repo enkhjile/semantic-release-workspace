@@ -65,8 +65,8 @@ test('Cargo OIDC exchanges once for coordinated crates, publishes and revokes us
   expect(service.state().cargoExchanges).toHaveLength(1);
   expect(service.state().cargoExchanges[0].revoked).toBe(true);
   expect(service.state().uploads).toEqual([
-    'cargo:trusted-core@1.1.0',
-    'cargo:trusted-app@1.1.0',
+    'cargo:trusted-core@1.0.0',
+    'cargo:trusted-app@1.0.0',
   ]);
   expect(repo.state().status).toBe('complete');
   expect(
@@ -134,7 +134,7 @@ test('fresh clone confirms an uncertain Cargo upload without any CI identity or 
   expect(service.state().cargoExchanges).toHaveLength(1);
   expect(service.state().uploads).toHaveLength(1);
   expect(repo.state().execution.packages[0].artifact).toEqual(artifact);
-  expect(repo.tags()).toContain('cargo/trusted-core@1.1.0');
+  expect(repo.tags()).toContain('workspace-v1.0.0');
   expect(
     repo.git(repo.remote, 'show', `${artifact.commit}:metadata.json`),
   ).not.toContain('secret');
@@ -413,7 +413,7 @@ test('partial coordinated Cargo retries exchange anew only for remaining crates'
   const { repo, service, settings } = await setup(true);
   service.control('reject-second');
   expect(repo.run(settings).ok).toBe(false);
-  expect(service.state().uploads).toEqual(['cargo:trusted-core@1.1.0']);
+  expect(service.state().uploads).toEqual(['cargo:trusted-core@1.0.0']);
   expect(service.state().cargoExchanges[0].revoked).toBe(true);
   const retained = repo
     .state()
@@ -422,8 +422,8 @@ test('partial coordinated Cargo retries exchange anew only for remaining crates'
   const result = repo.run(settings, repo.clone());
   expect(result.ok, result.logs).toBe(true);
   expect(service.state().uploads).toEqual([
-    'cargo:trusted-core@1.1.0',
-    'cargo:trusted-app@1.1.0',
+    'cargo:trusted-core@1.0.0',
+    'cargo:trusted-app@1.0.0',
   ]);
   expect(service.state().cargoExchanges).toHaveLength(2);
   expect(

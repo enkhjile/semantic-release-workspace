@@ -3,13 +3,15 @@
 ## Set up a checkout
 
 Fork [semantic-release-workspace](https://github.com/enkhjile/semantic-release-workspace),
-then clone your fork and create a branch from `main`:
+then clone your fork and create a branch from `alpha` while prerelease development
+is active:
 
 ```sh
 git clone https://github.com/YOUR-USER/semantic-release-workspace.git
 cd semantic-release-workspace
 git remote add upstream https://github.com/enkhjile/semantic-release-workspace.git
-git switch -c fix/describe-your-change
+git fetch upstream alpha
+git switch -c fix/describe-your-change upstream/alpha
 pnpm install --frozen-lockfile
 pnpm check
 ```
@@ -60,6 +62,15 @@ avoid scripts with external side effects.
 Reproduce release regressions through real `semantic-release` runs. Check the
 published artifact as well as the plan when manifests change, and cover dry-run
 side effects and fresh-clone recovery when release state is involved.
+Shared-version regressions must assert the core tag and every public artifact
+use the same version, including unchanged npm/Cargo members. Keep coverage for
+root-only Conventional Commits, private exclusions, shared dependency requirements,
+alpha → main → alpha backmerges, and retries after the workspace tag is pushed.
+A recovered tagged batch can return `false` while completing its journal; verify
+registry contents and retained state instead of treating that result as failure.
+Use completed real lifecycle baselines in fixtures, not orphan workspace tags.
+Retained prepared commits, rather than per-package tags, expose released manifests.
+
 The consumer-entry test packs and installs the plugin before loading it by its
 documented package name. Packaging regressions use native npm and Cargo archives;
 the npm output fixture exercises both legacy arrays and npm 12's keyed JSON.
@@ -77,9 +88,9 @@ and divergent-branch channel promotion covered through these real lifecycles.
 - For code or packaging changes, run `pnpm check` and inspect `pnpm pack` output.
   For docs-only changes, validate links, examples, and formatting. Report what
   you checked and any checks you could not run; do not claim unverified results.
-- Open a focused pull request against `main`, explain the problem and resulting
-  behavior, and include relevant validation. Maintainers can use `alpha` for
-  prerelease work.
+- Open a focused pull request against `alpha` during prerelease development,
+  explain the problem and resulting behavior, and include relevant validation.
+  Maintainers promote verified alpha work to `main` for stable releases.
 
 Use Conventional Commits for commits and squash-merge PR titles: `fix:` requests
 a patch release, `feat:` a minor release, and a `BREAKING CHANGE:` footer a major

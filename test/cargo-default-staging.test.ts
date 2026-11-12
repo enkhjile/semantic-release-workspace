@@ -39,6 +39,9 @@ async function setup(
   crossRegistry = false,
 ) {
   const repo = fixture();
+  repo.commit('feat: establish shared baseline');
+  const baseline = repo.run();
+  expect(baseline.ok, baseline.logs).toBe(true);
   const service = await registry();
   const selected = crossRegistry ? await registry() : service;
   mkdirSync(service.env.CARGO_HOME, { recursive: true });
@@ -274,6 +277,7 @@ test.each([false, true])(
       expect(service.state().uploads).toEqual([
         'cargo:default-registry-core@1.1.0',
         'cargo:default-registry-adapter@1.1.0',
+        'cargo:default-registry-core@1.1.1',
         'cargo:default-registry-adapter@1.1.1',
       ]);
       expect(repo.state().planning.plan.packages).toEqual(
@@ -281,7 +285,7 @@ test.each([false, true])(
           expect.objectContaining({
             id: 'cargo:default-registry-core',
             currentVersion: '1.1.0',
-            nextVersion: null,
+            nextVersion: '1.1.1',
           }),
           expect.objectContaining({
             id: 'cargo:default-registry-adapter',
@@ -292,7 +296,7 @@ test.each([false, true])(
       );
       expect((await dependencyManifest(service, '1.1.1')).dependencies).toEqual(
         {
-          renamed: { package: 'default-registry-core', version: '=1.1.0' },
+          renamed: { package: 'default-registry-core', version: '=1.1.1' },
         },
       );
       unchanged();

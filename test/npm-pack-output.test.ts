@@ -139,12 +139,12 @@ test.each(['array', 'keyed'])(
     const released = repo.run(settings);
     expect(released.ok, released.logs).toBe(true);
     expect(service.state().uploads).toEqual([
-      'npm:@fixture/native-core@1.1.0',
-      'npm:native-app@1.1.0',
+      'npm:@fixture/native-core@1.0.0',
+      'npm:native-app@1.0.0',
     ]);
     expect(packs()).toHaveLength(2);
     const core = Buffer.from(
-      service.state().npm['@fixture/native-core']['1.1.0'].artifact,
+      service.state().npm['@fixture/native-core']['1.0.0'].artifact,
       'base64',
     );
     expect(await archiveFile(core, 'package/built.txt')).toBe(
@@ -154,7 +154,7 @@ test.each(['array', 'keyed'])(
       JSON.parse(await archiveFile(core, 'package/package.json')),
     ).toMatchObject({
       name: '@fixture/native-core',
-      version: '1.1.0',
+      version: '1.0.0',
       publishConfig: { registry: service.url, tag: 'latest', access: 'public' },
     });
     const native = packs().find(
@@ -164,15 +164,15 @@ test.each(['array', 'keyed'])(
       `sha512-${createHash('sha512').update(core).digest('base64')}`,
     );
     const app = Buffer.from(
-      service.state().npm['native-app']['1.1.0'].artifact,
+      service.state().npm['native-app']['1.0.0'].artifact,
       'base64',
     );
     expect(
       JSON.parse(await archiveFile(app, 'package/package.json')).dependencies,
     ).toEqual({
-      '@fixture/native-core': '^1.1.0',
+      '@fixture/native-core': '^1.0.0',
     });
-    expect(repo.tags()).toContain('npm/@fixture/native-core@1.1.0');
+    expect(repo.tags()).toContain('workspace-v1.0.0');
     expect(repo.state().status).toBe('complete');
     expect(
       readFileSync(join(repo.cwd, 'packages/core/package.json'), 'utf8'),
@@ -201,7 +201,7 @@ test('npm keyed pack output retains native bytes for a fresh-clone retry without
   const retried = repo.run(settings, repo.clone());
   expect(retried.ok, retried.logs).toBe(true);
   expect(repo.state().execution.packages[0].artifact).toEqual(artifact);
-  expect(service.state().uploads).toEqual(['npm:@fixture/native-core@1.1.0']);
+  expect(service.state().uploads).toEqual(['npm:@fixture/native-core@1.0.0']);
   expect(packs()).toHaveLength(1);
   expect(repo.state().status).toBe('complete');
 });
@@ -224,7 +224,7 @@ test.each([
     expect(result.codes, result.logs).toContain('EWORKSPACEPUBLISH');
     expect(packs()).toHaveLength(1);
     expect(service.state().uploads).toEqual([]);
-    expect(repo.tags().filter((tag) => tag.startsWith('npm/'))).toEqual([]);
+    expect(repo.tags()).toEqual(['workspace-v1.0.0']);
     expect(repo.state().status).toBe('pending');
     expect(repo.state().execution.packages[0].artifact).toBeUndefined();
     expect(repo.git(repo.cwd, 'status', '--porcelain')).toBe('');

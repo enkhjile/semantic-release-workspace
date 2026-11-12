@@ -26,6 +26,9 @@ test.each([
   '$ecosystem relocation uses the correct changelog history (committed override: $override)',
   async ({ ecosystem, override }) => {
     const repo = fixture();
+    repo.commit('feat: establish shared baseline');
+    const baseline = repo.run();
+    expect(baseline.ok, baseline.logs).toBe(true);
     const service = await registry();
     const file = (path: string, contents: string) => {
       mkdirSync(join(repo.cwd, path, '..'), { recursive: true });
@@ -81,7 +84,7 @@ test.each([
       repo.git(
         repo.remote,
         'show',
-        `${ecosystem}/app@1.1.0:${previousPath}/CHANGELOG.md`,
+        `${repo.prepared('1.1.0')}:${previousPath}/CHANGELOG.md`,
       ),
     ).toContain('introduce original behavior');
 
@@ -122,6 +125,9 @@ test.each([
 
 test('co-locating, splitting and reuniting packages preserves each changelog entry once', async () => {
   const repo = fixture();
+  repo.commit('feat: establish shared baseline');
+  const baseline = repo.run();
+  expect(baseline.ok, baseline.logs).toBe(true);
   const service = await registry();
   const file = (path: string, contents: string) => {
     mkdirSync(join(repo.cwd, path, '..'), { recursive: true });
@@ -145,7 +151,7 @@ test('co-locating, splitting and reuniting packages preserves each changelog ent
     '.cargo/config.toml',
     `[registries.fixture]\nindex="sparse+${service.url}/cargo/index/"\n`,
   );
-  commit('feat: original independent package histories');
+  commit('feat: original package histories');
   const settings = {
     env: service.env,
     pluginConfig: {
@@ -201,11 +207,11 @@ test('co-locating, splitting and reuniting packages preserves each changelog ent
   let result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
   file('packages/app/index.js', 'export const value = 2;\n');
-  commit('fix: improve npm independently');
+  commit('fix: improve npm implementation');
   result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
   file('crates/app/src/lib.rs', 'pub fn value() -> u8 { 2 }\n');
-  commit('fix: improve Cargo independently');
+  commit('fix: improve Cargo implementation');
   result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
   renameSync(
@@ -223,11 +229,18 @@ test('co-locating, splitting and reuniting packages preserves each changelog ent
   expect(result.ok, result.logs).toBe(true);
   for (const ecosystem of ['npm', 'cargo']) {
     const text = await archiveFile(
-      Buffer.from(service.state()[ecosystem].app['1.1.4'].artifact, 'base64'),
-      `${ecosystem === 'npm' ? 'package' : 'app-1.1.4'}/CHANGELOG.md`,
+      Buffer.from(service.state()[ecosystem].app['1.1.5'].artifact, 'base64'),
+      `${ecosystem === 'npm' ? 'package' : 'app-1.1.5'}/CHANGELOG.md`,
     );
     for (const id of ['npm:app', 'cargo:app'])
-      for (const version of ['1.1.0', '1.1.1', '1.1.2', '1.1.3', '1.1.4'])
+      for (const version of [
+        '1.1.0',
+        '1.1.1',
+        '1.1.2',
+        '1.1.3',
+        '1.1.4',
+        '1.1.5',
+      ])
         expect(
           text.match(
             new RegExp(`## ${id}@${version.replaceAll('.', '\\.')}`, 'g'),

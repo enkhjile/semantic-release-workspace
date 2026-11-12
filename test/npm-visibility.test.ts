@@ -74,14 +74,14 @@ test('real semantic-release waits for delayed registry metadata after an accepte
   expect(service.state().npmVisibilityReads['visibility-core']).toBeGreaterThan(
     5,
   );
-  expect(service.state().uploads).toEqual(['npm:visibility-core@1.1.0']);
+  expect(service.state().uploads).toEqual(['npm:visibility-core@1.0.0']);
   expect(
     service
       .state()
       .requests.filter((call: { method: string }) => call.method === 'PUT'),
   ).toHaveLength(1);
   expect(repo.state().status).toBe('complete');
-  expect(repo.tags()).toContain('npm/visibility-core@1.1.0');
+  expect(repo.tags()).toEqual(['workspace-v1.0.0']);
 });
 
 test('real semantic-release waits across fresh clones without republishing an acknowledged upload', async () => {
@@ -97,39 +97,38 @@ test('real semantic-release waits across fresh clones without republishing an ac
     intent: true,
     acknowledged: true,
     published: false,
-    tagged: false,
   });
   const artifact = pending.execution.packages[0].artifact;
-  const bytes = service.state().npm['visibility-core']['1.1.0'].artifact;
+  const bytes = service.state().npm['visibility-core']['1.0.0'].artifact;
   expect(packs()).toBe('pack\n');
 
   const hiddenRetry = repo.run(settings, repo.clone('main', 'hidden-retry'));
   expect(hiddenRetry.ok).toBe(false);
   expect(hiddenRetry.codes).toContain('EWORKSPACEPUBLISH');
   expect(repo.state().execution.packages[0].artifact).toEqual(artifact);
-  expect(service.state().uploads).toEqual(['npm:visibility-core@1.1.0']);
+  expect(service.state().uploads).toEqual(['npm:visibility-core@1.0.0']);
   expect(
     service
       .state()
       .requests.filter((call: { method: string }) => call.method === 'PUT'),
   ).toHaveLength(1);
   expect(packs()).toBe('pack\n');
-  expect(repo.tags()).not.toContain('npm/visibility-core@1.1.0');
+  expect(repo.state().execution.packages[0].published).toBe(false);
 
   service.control('');
   const recovered = repo.run(settings, repo.clone('main', 'visible-retry'));
   expect(recovered.ok, recovered.logs).toBe(true);
   expect(repo.state().status).toBe('complete');
   expect(repo.state().execution.packages[0].artifact).toEqual(artifact);
-  expect(service.state().npm['visibility-core']['1.1.0'].artifact).toBe(bytes);
-  expect(service.state().uploads).toEqual(['npm:visibility-core@1.1.0']);
+  expect(service.state().npm['visibility-core']['1.0.0'].artifact).toBe(bytes);
+  expect(service.state().uploads).toEqual(['npm:visibility-core@1.0.0']);
   expect(
     service
       .state()
       .requests.filter((call: { method: string }) => call.method === 'PUT'),
   ).toHaveLength(1);
   expect(packs()).toBe('pack\n');
-  expect(repo.tags()).toContain('npm/visibility-core@1.1.0');
+  expect(repo.tags()).toEqual(['workspace-v1.0.0']);
 });
 
 test('real semantic-release rejects a conflicting registry integrity after a hidden upload', async () => {
@@ -138,7 +137,7 @@ test('real semantic-release rejects a conflicting registry integrity after a hid
   service.control('hide-npm');
   expect(repo.run(settings).ok).toBe(false);
   const state = service.state();
-  state.npm['visibility-core']['1.1.0'].metadata.dist.integrity =
+  state.npm['visibility-core']['1.0.0'].metadata.dist.integrity =
     `sha512-${Buffer.alloc(64, 42).toString('base64')}`;
   writeFileSync(join(service.root, 'registry.json'), JSON.stringify(state));
   service.control('');
@@ -146,12 +145,12 @@ test('real semantic-release rejects a conflicting registry integrity after a hid
   expect(retry.ok).toBe(false);
   expect(retry.codes).toContain('EWORKSPACECONFLICT');
   expect(repo.state().status).toBe('pending');
-  expect(service.state().uploads).toEqual(['npm:visibility-core@1.1.0']);
+  expect(service.state().uploads).toEqual(['npm:visibility-core@1.0.0']);
   expect(
     service
       .state()
       .requests.filter((call: { method: string }) => call.method === 'PUT'),
   ).toHaveLength(1);
-  expect(repo.tags()).not.toContain('npm/visibility-core@1.1.0');
+  expect(repo.state().execution.packages[0].published).toBe(false);
   expect(packs()).toBe('pack\n');
 });

@@ -77,14 +77,10 @@ export async function notesForRelease(
         ...context,
         cwd: context.cwd ?? process.cwd(),
         commits: pkg.commits,
-        lastRelease: {
-          gitTag: pkg.currentVersion
-            ? `${pkg.id.replace(':', '/')}@${pkg.currentVersion}`
-            : undefined,
-        },
+        lastRelease: 'lastRelease' in context ? context.lastRelease : {},
         nextRelease: {
           version: pkg.nextVersion,
-          gitTag: `${pkg.id.replace(':', '/')}@${pkg.nextVersion}`,
+          gitTag: `workspace-v${pkg.nextVersion}`,
         },
         options: {
           ...context.options,

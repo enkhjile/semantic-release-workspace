@@ -13,7 +13,7 @@ afterEach(() => {
 });
 const branches = ['main', { name: 'beta', prerelease: true }];
 function workspace() {
-  const repo = fixture({ synchronizeDependents: true });
+  const repo = fixture();
   writeFileSync(
     join(repo.cwd, 'package.json'),
     JSON.stringify({ private: true, workspaces: ['packages/*'] }),
@@ -60,7 +60,7 @@ test('real lifecycle plans prereleases, coordinates dependents, increments count
   const dry = repo.run({ branches, dryRun: true });
   expect(dry.ok, dry.logs).toBe(true);
   const refs = repo.refs();
-  expect(JSON.stringify(dry.result)).toContain('1.2.0-beta.1');
+  expect(JSON.stringify(dry.result)).toContain('1.1.0-beta.1');
   expect(repo.refs()).toBe(refs);
   const first = repo.run({ branches });
   expect(first.ok, first.logs).toBe(true);
@@ -68,7 +68,7 @@ test('real lifecycle plans prereleases, coordinates dependents, increments count
     repo
       .state('beta')
       .planning.versions.map((p: { version: string }) => p.version),
-  ).toEqual(['1.1.1-beta.1', '1.2.0-beta.1']);
+  ).toEqual(['1.1.0-beta.1', '1.1.0-beta.1']);
   change(repo);
   const second = repo.run({ branches });
   expect(second.ok, second.logs).toBe(true);
@@ -76,7 +76,7 @@ test('real lifecycle plans prereleases, coordinates dependents, increments count
     repo
       .state('beta')
       .planning.versions.map((p: { version: string }) => p.version),
-  ).toEqual(['1.1.1-beta.2', '1.2.0-beta.2']);
+  ).toEqual(['1.1.0-beta.2', '1.1.0-beta.2']);
   const noop = repo.run({ branches });
   expect(noop.ok, noop.logs).toBe(true);
   expect(noop.result).toBe(false);
@@ -87,7 +87,7 @@ test('real lifecycle plans prereleases, coordinates dependents, increments count
   expect(stable.ok, stable.logs).toBe(true);
   expect(
     repo.state().planning.versions.map((p: { version: string }) => p.version),
-  ).toEqual(['1.1.1', '1.2.0']);
+  ).toEqual(['1.1.0', '1.1.0']);
 });
 test('fresh clone resumes a pending prerelease without reallocating versions', () => {
   const repo = workspace();
@@ -116,8 +116,8 @@ test('npm channels preserve latest while publishing prereleases and stable promo
   result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
   expect(service.state().npmTags.lib).toEqual({
-    latest: '1.1.0',
-    beta: '1.2.0-beta.1',
+    latest: '1.0.0',
+    beta: '1.1.0-beta.1',
   });
   repo.git(repo.cwd, 'checkout', 'main');
   repo.git(repo.cwd, 'merge', '--ff-only', 'beta');
@@ -125,8 +125,8 @@ test('npm channels preserve latest while publishing prereleases and stable promo
   result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
   expect(service.state().npmTags.lib).toEqual({
-    latest: '1.2.0',
-    beta: '1.2.0-beta.1',
+    latest: '1.1.0',
+    beta: '1.1.0-beta.1',
   });
 });
 
@@ -171,18 +171,18 @@ test('stable branch promotion adds npm channels for all package versions without
   result = repo.run(settings, repo.clone());
   expect(result.ok, result.logs).toBe(true);
   expect(service.state().npmTags.lib).toEqual({
-    latest: '2.0.0',
-    next: '2.0.0',
+    latest: '2.0.1',
+    next: '2.0.1',
   });
   expect(service.state().npmTags.app).toEqual({
-    latest: '1.1.2',
-    next: '1.1.2',
+    latest: '2.0.1',
+    next: '2.0.1',
   });
   expect(service.state().uploads).toEqual(uploads);
   change(repo);
   result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
-  expect(service.state().npmTags.lib.latest).toBe('2.0.1');
+  expect(service.state().npmTags.lib.latest).toBe('2.0.2');
 });
 
 test('Cargo publishes coordinated prereleases and stable promotion with native packaging', async () => {
@@ -241,20 +241,20 @@ test('Cargo publishes coordinated prereleases and stable promotion with native p
   result = repo.run(settings, repo.clone('beta'));
   expect(result.ok, result.logs).toBe(true);
   expect(repo.state('beta').planning.plan).toEqual(frozen);
-  expect(service.state().cargo['branch-core']['1.2.0-beta.1']).toBeDefined();
+  expect(service.state().cargo['branch-core']['1.1.0-beta.1']).toBeDefined();
   expect(
-    service.state().cargo['branch-app']['1.1.1-beta.1'].metadata.deps[0]
+    service.state().cargo['branch-app']['1.1.0-beta.1'].metadata.deps[0]
       .version_req,
-  ).toBe('=1.2.0-beta.1');
+  ).toBe('=1.1.0-beta.1');
   repo.git(repo.cwd, 'checkout', 'main');
   repo.git(repo.cwd, 'merge', '--ff-only', 'beta');
   repo.git(repo.cwd, 'push', 'origin', 'main');
   result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
-  expect(service.state().cargo['branch-core']['1.2.0']).toBeDefined();
+  expect(service.state().cargo['branch-core']['1.1.0']).toBeDefined();
   expect(
-    service.state().cargo['branch-app']['1.1.1'].metadata.deps[0].version_req,
-  ).toBe('=1.2.0');
+    service.state().cargo['branch-app']['1.1.0'].metadata.deps[0].version_req,
+  ).toBe('=1.1.0');
 });
 
 test('maintenance branches publish npm channels and reject package range overflow in dry-run', async () => {
@@ -285,10 +285,10 @@ test('maintenance branches publish npm channels and reject package range overflo
       .state('1.x')
       .planning.versions.find((pkg: { id: string }) => pkg.id === 'npm:lib')
       .version,
-  ).toBe('1.1.1');
+  ).toBe('1.0.1');
   expect(service.state().npmTags.lib).toEqual({
     latest: '2.0.0',
-    'release-1.x': '1.1.1',
+    'release-1.x': '1.0.1',
   });
   expect(repo.git(repo.cwd, 'merge-base', 'HEAD', base)).toBe(base);
   change(repo, 'feat: incompatible backport\n\nBREAKING CHANGE: incompatible');
@@ -321,9 +321,9 @@ test('parallel prerelease branches coordinate independently at the same source h
   result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
   expect(service.state().npmTags.lib).toEqual({
-    latest: '1.1.0',
-    alpha: '1.2.0-alpha.1',
-    beta: '1.2.0-beta.1',
+    latest: '1.0.0',
+    alpha: '1.1.0-alpha.1',
+    beta: '1.1.0-beta.1',
   });
   expect(repo.state('alpha').execution.prepared).not.toBe(
     repo.state('beta').execution.prepared,
@@ -335,7 +335,7 @@ test('parallel prerelease branches coordinate independently at the same source h
     expect(result.result).toMatchObject({
       nextRelease: { version: `1.1.0-beta.${counter}` },
     });
-    expect(service.state().npmTags.lib.beta).toBe(`1.2.0-beta.${counter}`);
+    expect(service.state().npmTags.lib.beta).toBe(`1.1.0-beta.${counter}`);
   }
   repo.git(repo.cwd, 'checkout', 'alpha');
   change(repo);
@@ -364,7 +364,7 @@ test('hyphenated prerelease identifiers retain counters and reject channel drift
   expect(
     pending.packages.find((pkg: { id: string }) => pkg.id === 'npm:lib')
       .nextVersion,
-  ).toBe('1.2.0-beta-test.2');
+  ).toBe('1.1.0-beta-test.2');
   result = repo.run({
     branches: [
       'main',
@@ -377,7 +377,7 @@ test('hyphenated prerelease identifiers retain counters and reject channel drift
   expect(result.ok, result.logs).toBe(true);
 });
 
-test('per-package higher-branch bounds reject a dependency bump even when the coordinator patch fits', () => {
+test('core shared branch bounds permit a lower patch and reject reaching an unmerged higher release', () => {
   const repo = workspace();
   expect(repo.run().ok).toBe(true);
   checkout(repo, 'next');
@@ -386,10 +386,13 @@ test('per-package higher-branch bounds reject a dependency bump even when the co
   expect(result.ok, result.logs).toBe(true);
   repo.git(repo.cwd, 'checkout', 'main');
   change(repo);
+  result = repo.run({ branches: ['main', 'next'] });
+  expect(result.ok, result.logs).toBe(true);
+  expect(result.result).toMatchObject({ nextRelease: { version: '1.0.1' } });
+  change(repo, 'feat: reach next version');
   const refs = repo.refs();
   result = repo.run({ branches: ['main', 'next'], dryRun: true });
-  expect(result.ok, result.logs).toBe(false);
-  expect(result.codes).toContain('EWORKSPACEBRANCH');
+  expect(result.codes, result.logs).toContain('EINVALIDNEXTVERSION');
   expect(repo.refs()).toBe(refs);
 });
 
@@ -466,7 +469,7 @@ test('OIDC promotion preserves signed artifacts and resumes uncertain dist-tags 
   });
   result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
-  const retained = service.state().npm.lib['1.2.0'];
+  const retained = service.state().npm.lib['1.1.0'];
   const uploads = service.state().uploads;
   const signingCalls = () =>
     signing.events().filter((path) => path.startsWith('/api/'));
@@ -485,11 +488,11 @@ test('OIDC promotion preserves signed artifacts and resumes uncertain dist-tags 
   expect(result.ok, result.logs).toBe(true);
   expect(repo.refs()).toBe(refs);
   expect(service.state().exchanges).toHaveLength(exchanges);
-  expect(service.state().npmTags.lib.latest).toBe('1.1.0');
+  expect(service.state().npmTags.lib.latest).toBe('1.0.0');
   service.control('once-drop-unreadable');
   result = repo.run(settings, repo.clone('main', 'retry-first'));
   expect(result.ok).toBe(false);
-  expect(service.state().npmTags.lib.latest).toBe('1.2.0');
+  expect(service.state().npmTags.lib.latest).toBe('1.1.0');
   const acceptedExchanges = service.state().exchanges.length;
   service.control('');
   result = repo.run(
@@ -498,7 +501,7 @@ test('OIDC promotion preserves signed artifacts and resumes uncertain dist-tags 
   );
   expect(result.ok, result.logs).toBe(true);
   expect(service.state().exchanges).toHaveLength(acceptedExchanges);
-  expect(service.state().npm.lib['1.2.0']).toEqual(retained);
+  expect(service.state().npm.lib['1.1.0']).toEqual(retained);
   expect(service.state().uploads).toEqual(uploads);
   expect(signingCalls()).toEqual(signed);
   expect(result.logs).not.toContain('secret');
@@ -524,8 +527,8 @@ test('dry-run rejects a package version already tagged on an unmerged branch', (
   expect(repo.run().ok).toBe(true);
   checkout(repo, 'other');
   change(repo, 'fix: other branch library');
-  repo.git(repo.cwd, 'tag', 'npm/lib@1.1.1');
-  repo.git(repo.cwd, 'push', 'origin', 'npm/lib@1.1.1');
+  repo.git(repo.cwd, 'tag', 'npm/lib@1.0.1');
+  repo.git(repo.cwd, 'push', 'origin', 'npm/lib@1.0.1');
   repo.git(repo.cwd, 'checkout', 'main');
   change(repo);
   const refs = repo.refs();
@@ -536,7 +539,7 @@ test('dry-run rejects a package version already tagged on an unmerged branch', (
 });
 
 test('Cargo maintenance releases coordinate dependencies on the older release line', async () => {
-  const repo = fixture({ synchronizeDependents: true });
+  const repo = fixture();
   const service = await registry();
   mkdirSync(join(repo.cwd, '.cargo'));
   writeFileSync(
@@ -594,10 +597,10 @@ test('Cargo maintenance releases coordinate dependencies on the older release li
   expect(service.state().uploads).toEqual(uploads);
   result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
-  expect(service.state().cargo['line-core']['1.1.1']).toBeDefined();
+  expect(service.state().cargo['line-core']['1.0.1']).toBeDefined();
   expect(
-    service.state().cargo['line-app']['1.1.1'].metadata.deps[0].version_req,
-  ).toBe('=1.1.1');
+    service.state().cargo['line-app']['1.0.1'].metadata.deps[0].version_req,
+  ).toBe('=1.0.1');
   expect(repo.state('1.x').planning.plan.release.channel).toBe('1.x');
   expect(service.state().channelUpdates).toBeUndefined();
 });
@@ -629,7 +632,7 @@ test('channel promotion forbids credential-bearing redirects and recovers in a f
   service.control('');
   result = repo.run(settings, repo.clone());
   expect(result.ok, result.logs).toBe(true);
-  expect(service.state().npmTags.lib.latest).toBe('1.2.0');
+  expect(service.state().npmTags.lib.latest).toBe('1.1.0');
   expect(service.state().uploads).toEqual(uploads);
 });
 
@@ -724,10 +727,10 @@ test('a pending prerelease does not consume another prerelease branch counter', 
       .state('beta')
       .planning.versions.find((pkg: { id: string }) => pkg.id === 'npm:lib')
       .version,
-  ).toBe('1.2.0-beta.1');
+  ).toBe('1.1.0-beta.1');
 });
 
-test('completed legacy journals retain dependency projections without archived release plans', () => {
+test('shared releases do not need archived package projections', () => {
   const repo = workspace();
   expect(repo.run().ok).toBe(true);
   mkdirSync(join(repo.cwd, 'packages/tool'));
@@ -759,7 +762,7 @@ test('completed legacy journals retain dependency projections without archived r
       .planning.plan.packages.find(
         (pkg: { id: string }) => pkg.id === 'npm:app',
       ).nextVersion,
-  ).toBe('1.1.1');
+  ).toBe('1.2.0');
 });
 
 test('stable plans do not inherit dev dependency projections from prerelease carriers', () => {
@@ -785,7 +788,7 @@ test('stable plans do not inherit dev dependency projections from prerelease car
       .planning.plan.packages.find(
         (pkg: { id: string }) => pkg.id === 'npm:app',
       ).nextVersion,
-  ).toBe(null);
+  ).toBe('1.1.0-beta.1');
   repo.git(repo.cwd, 'checkout', 'main');
   repo.git(repo.cwd, 'merge', '--ff-only', 'beta');
   repo.git(repo.cwd, 'push', 'origin', 'main');
@@ -797,7 +800,7 @@ test('stable plans do not inherit dev dependency projections from prerelease car
       (pkg: { id: string }) => pkg.id === 'npm:app',
     ).dependencyUpdates;
   expect(updates).toEqual([
-    expect.objectContaining({ field: ['devDependencies', 'lib'], to: '1.2.0' }),
+    expect.objectContaining({ field: ['devDependencies', 'lib'], to: '1.1.0' }),
   ]);
   writeFileSync(
     join(repo.cwd, 'packages/app/index.js'),
@@ -813,7 +816,9 @@ test('stable plans do not inherit dev dependency projections from prerelease car
       .planning.plan.packages.find(
         (pkg: { id: string }) => pkg.id === 'npm:app',
       ).dependencyUpdates,
-  ).toEqual(updates);
+  ).toEqual([
+    expect.objectContaining({ field: ['devDependencies', 'lib'], to: '1.1.1' }),
+  ]);
 });
 
 test('a release from the feature root commit does not shadow semantic-release channel metadata', () => {
@@ -948,7 +953,7 @@ test('legacy channel repair does not preempt maintenance promotion of a differen
   expect(result.ok, result.logs).toBe(true);
   expect(service.state().npmTags.lib).toEqual({
     latest: '2.0.0',
-    'release-1.x': '1.1.0',
+    'release-1.x': '1.0.0',
   });
   expect(channels()).toEqual([null, '1.x']);
   expect(service.state().uploads).toEqual(uploads);

@@ -16,6 +16,9 @@ afterEach(() => {
 
 async function setup(inherited = true, shared = false) {
   const repo = fixture();
+  repo.commit('feat: establish shared baseline');
+  const baseline = repo.run();
+  expect(baseline.ok, baseline.logs).toBe(true);
   const service = await registry();
   const files: Record<string, string> = {
     '.gitignore': 'Cargo.lock\ntarget/\n',
@@ -128,8 +131,7 @@ test.each([
       'cargo:inherited-adapter@1.1.0',
     ]);
     expect(repo.state().status).toBe('complete');
-    expect(repo.tags()).toContain('cargo/inherited-core@1.1.0');
-    expect(repo.tags()).toContain('cargo/inherited-adapter@1.1.0');
+    expect(repo.tags()).toContain('workspace-v1.1.0');
     expect(repo.tags().some((tag) => tag.includes('private-'))).toBe(false);
     for (const name of ['inherited-core', 'inherited-adapter']) {
       const manifest = await downloadedManifest(service, name);

@@ -27,7 +27,8 @@ export interface PublicationPackage {
   intent: boolean;
   acknowledged?: boolean;
   published: boolean;
-  tagged: boolean;
+  /** Read-only compatibility with completed independent-version journals. */
+  tagged?: boolean;
 }
 export interface Execution {
   prepared: string;
@@ -48,9 +49,7 @@ export function validExecution(value: unknown): value is Execution {
         !record(entry.destination) ||
         !['npm', 'cargo'].includes(String(entry.destination.ecosystem)) ||
         typeof entry.destination.registry !== 'string' ||
-        !['intent', 'published', 'tagged'].every(
-          (key) => typeof entry[key] === 'boolean',
-        )
+        !['intent', 'published'].every((key) => typeof entry[key] === 'boolean')
       )
         return false;
       if (
@@ -79,6 +78,7 @@ export function validExecution(value: unknown): value is Execution {
       )
         return false;
       if (
+        (entry.tagged !== undefined && typeof entry.tagged !== 'boolean') ||
         (entry.tagged && !entry.published) ||
         (entry.published && !entry.intent) ||
         (entry.intent && !entry.artifact) ||

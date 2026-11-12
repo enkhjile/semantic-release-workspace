@@ -87,6 +87,34 @@ export function fixture(defaultPluginConfig: Record<string, unknown> = {}) {
     tags() {
       return git(remote, 'tag', '--list').split('\n').filter(Boolean);
     },
+    prepared(version: string) {
+      const refs = git(
+        remote,
+        'for-each-ref',
+        '--format=%(refname)',
+        'refs/notes/workspace-release-history/',
+      )
+        .split('\n')
+        .filter(Boolean);
+      for (const ref of refs) {
+        let raw: string;
+        try {
+          raw = git(
+            remote,
+            'notes',
+            `--ref=${ref}`,
+            'show',
+            `workspace-v${version}`,
+          );
+        } catch {
+          continue;
+        }
+        const journal = JSON.parse(raw);
+        if (journal.batchTag === `workspace-v${version}` && journal.execution)
+          return journal.execution.prepared as string;
+      }
+      throw new Error(`No prepared publication for shared version ${version}`);
+    },
     state(branch = 'main') {
       const ref =
         branch === 'main'

@@ -56,6 +56,11 @@ export function validPlanning(value: unknown): value is PlanningState {
         (plan.release.type === 'prerelease' &&
           (typeof plan.release.prerelease !== 'string' ||
             valid(`1.0.0-${plan.release.prerelease}.1`) === null)))) ||
+    (plan.versioning !== undefined &&
+      (plan.versioning !== 'shared' ||
+        plan.dependencyPolicy !== undefined ||
+        !version(plan.version) ||
+        !['major', 'minor', 'patch'].includes(String(plan.releaseType)))) ||
     plan.schemaVersion !== 1 ||
     !oid(plan.head) ||
     !(plan.baseHead === null || oid(plan.baseHead)) ||
@@ -89,6 +94,11 @@ export function validPlanning(value: unknown): value is PlanningState {
         ['major', 'minor', 'patch'].some((type) => type === pkg.type)
       ) ||
       (pkg.type === null) !== (pkg.nextVersion === null) ||
+      (plan.versioning === 'shared' &&
+        (pkg.private
+          ? pkg.nextVersion !== null
+          : pkg.nextVersion !== plan.version ||
+            pkg.type !== plan.releaseType)) ||
       !Array.isArray(pkg.commits) ||
       !pkg.commits.every(
         (commit) =>

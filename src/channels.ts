@@ -171,33 +171,44 @@ async function applyPromotion(
     (await git(context, 'rev-list', promotion.head)).split('\n'),
   );
   const sourceVersions = publicVersions(source);
+  if (new Set(sourceVersions.map(({ version }) => version)).size > 1)
+    releaseError(
+      'Complete legacy independent-version channel promotions with the previous plugin before migrating.',
+      'EWORKSPACEMIGRATION',
+    );
   const freeze = promotion.versions === undefined;
-  if (freeze)
-    promotion.versions = sourceVersions.map((version) => {
-      let selected = version;
-      for (const entry of current.history) {
-        if (!ancestors.has(entry.head) || !entry.execution) continue;
-        const pkg = entry.planning?.plan.packages.find(
-          (pkg) => pkg.id === version.id && !pkg.private,
-        );
-        if (
-          pkg?.nextVersion &&
-          !prerelease(pkg.nextVersion) &&
-          gt(pkg.nextVersion, selected.version) &&
-          entry.execution.packages.some(
-            (pkg) => pkg.id === version.id && pkg.tagged,
-          )
+  if (freeze) {
+    // Promote one completed shared batch, never a mixture of package histories.
+    let selected = source;
+    for (const entry of current.history) {
+      const version = entry.planning?.plan.version;
+      if (
+        !ancestors.has(entry.head) ||
+        !entry.execution ||
+        !version ||
+        prerelease(version)
+      )
+        continue;
+      const previous =
+        selected.planning?.plan.version ?? selected.batchTag.slice(11);
+      if (
+        gt(version, previous) &&
+        sourceVersions.every(({ id }) =>
+          entry.planning?.plan.packages.some(
+            (pkg) => pkg.id === id && !pkg.private,
+          ),
         )
-          selected = {
-            id: version.id,
-            version: pkg.nextVersion,
-            head: entry.head,
-          };
-      }
-      return selected;
-    });
+      )
+        selected = entry;
+    }
+    promotion.versions = publicVersions(selected).filter(({ id }) =>
+      sourceVersions.some((version) => version.id === id),
+    );
+  }
   if (
     !validVersions(promotion.versions) ||
+    new Set(promotion.versions.map(({ version, head }) => `${version}:${head}`))
+      .size > 1 ||
     JSON.stringify(promotion.versions.map((version) => version.id).sort()) !==
       JSON.stringify(sourceVersions.map((version) => version.id).sort())
   )
@@ -234,7 +245,7 @@ async function applyPromotion(
     if (
       !pkg ||
       !publication?.artifact ||
-      !publication.tagged ||
+      !publication.published ||
       !origin?.execution
     )
       releaseError(

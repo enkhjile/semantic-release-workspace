@@ -60,7 +60,7 @@ test('Cargo retains the home default registry when the local registry table only
   const retry = repo.run(settings, repo.clone());
   expect(retry.ok, retry.logs).toBe(true);
   expect(service.state().uploads).toEqual([
-    'cargo:cargo-configuration-fixture@1.1.0',
+    'cargo:cargo-configuration-fixture@1.0.0',
   ]);
   expect(repo.state().execution.packages[0].artifact).toEqual(
     retained.artifact,
@@ -85,7 +85,7 @@ test('Cargo retains a home named-registry index when local configuration only ad
   const result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
   expect(service.state().uploads).toEqual([
-    'cargo:cargo-configuration-fixture@1.1.0',
+    'cargo:cargo-configuration-fixture@1.0.0',
   ]);
   expect(repo.state().execution.packages[0].destination).toMatchObject({
     registry: 'fixture',
@@ -111,7 +111,7 @@ test.each(['default', 'index'] as const)(
     });
     expect(result.ok, result.logs).toBe(true);
     expect(service.state().uploads).toEqual([
-      'cargo:cargo-configuration-fixture@1.1.0',
+      'cargo:cargo-configuration-fixture@1.0.0',
     ]);
     expect(other.state().requests).toEqual([]);
     expect(repo.state().execution.packages[0].destination).toMatchObject({

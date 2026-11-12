@@ -21,7 +21,7 @@ test.each(
 )(
   'publishes $protocol aliases with the target identity (target changed: $changed)',
   async ({ protocol, changed }) => {
-    const repo = fixture({ synchronizeDependents: true });
+    const repo = fixture();
     const service = await registry();
     const file = (path: string, value: string) => {
       mkdirSync(join(repo.cwd, path, '..'), { recursive: true });
@@ -71,7 +71,7 @@ test.each(
     expect(preview.ok, preview.logs).toBe(true);
     expect(repo.refs()).toBe(refs);
     expect(service.state().requests).toEqual([]);
-    const expected = `npm:@fixture/library@${changed ? '1.1.0' : '1.0.0'}`;
+    const expected = 'npm:@fixture/library@1.0.0';
     if (changed) {
       if (!preview.result) throw new Error('Expected a release plan');
       const block = preview.result.nextRelease.notes.match(
@@ -90,7 +90,7 @@ test.each(
     }
     const result = repo.run(settings);
     expect(result.ok, result.logs).toBe(true);
-    const version = changed ? '2.0.0' : '1.0.1';
+    const version = '1.0.0';
     const artifact = Buffer.from(
       service.state().npm['alias-app'][version].artifact,
       'base64',

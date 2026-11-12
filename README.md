@@ -1,9 +1,9 @@
 # semantic-release-workspace
 
-Independent npm and Cargo package releases through semantic-release. The plugin
-finds workspace packages, attributes commits by changed files, orders local
-dependencies, publishes package artifacts, and retains release state for retries
-from the same checkout or a fresh clone.
+One shared version for every public npm package and Cargo crate in a workspace,
+using semantic-release. Conventional Commits select the version; the plugin
+updates internal requirements, publishes in dependency order, and retains exact
+artifacts for retries from the same checkout or a fresh clone.
 
 For implementation details, see [Architecture](https://github.com/enkhjile/semantic-release-workspace/blob/main/docs/architecture.md). For project
 setup and contributions, see [CONTRIBUTING.md](https://github.com/enkhjile/semantic-release-workspace/blob/main/CONTRIBUTING.md).
@@ -21,7 +21,7 @@ Requirements for a consumer repository:
 - One release job at a time for the **whole repository**, including different
   branches. A concurrency group containing the branch name is insufficient.
 
-Until an npm release is available, follow the [development setup](https://github.com/enkhjile/semantic-release-workspace/blob/main/CONTRIBUTING.md#set-up-a-checkout)
+To try this checkout before it is published, follow the [development setup](https://github.com/enkhjile/semantic-release-workspace/blob/main/CONTRIBUTING.md#set-up-a-checkout)
 in this checkout and build a local tarball:
 
 ```sh
@@ -45,7 +45,7 @@ export default {
 ```
 
 The exact `tagFormat` is required. This plugin owns commit analysis, versioned
-manifests, package publication, and per-package tags; do not add a separate root
+manifests and package publication; do not add a separate root
 commit analyzer or npm publisher to this configuration. Publication is enabled
 by default. This repository's own package-release setup is described separately
 in [CONTRIBUTING.md](https://github.com/enkhjile/semantic-release-workspace/blob/main/CONTRIBUTING.md#maintainer-releases).
@@ -59,16 +59,15 @@ external side effects. Retried artifacts are reused without rebuilding.
 
 | Mode                      | Result                                                                                                                                              |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Default (`publish: true`) | Plans versions, prepares manifests, retains artifacts, uploads eligible npm packages/crates, and creates package tags.                              |
+| Default (`publish: true`) | Plans versions, prepares manifests, retains artifacts, publishes every public member under one shared workspace version.                            |
 | `publish: false`          | Records version plans and completion history, including coordinator tags and journals; does not prepare files, pack artifacts, or publish packages. |
 | `--dry-run`               | Previews the plan, notes, and next coordinator version or promotion without source-file changes or release-state writes.                            |
 
 For planning-only operation, use
 `plugins: [['semantic-release-workspace', { publish: false }]]`.
 Its recorded versions are planning history, not proof of registry publication.
-Completed projections inform later dependency plans even though source manifests
-remain unchanged. Editing a dependency requirement takes precedence over its
-stored projection.
+Source manifests remain unchanged after a run. Each new release calculates
+internal requirements from source manifests and the shared version.
 
 Dry runs may fetch Git metadata. Promotion previews also read registry checksums
 and retained provenance. They make no identity requests, token exchanges, signing
@@ -141,109 +140,73 @@ installation and creates no lockfile or registry resolution.
 Overlapping selections are deduplicated by canonical path. Nested packages stay
 separate; the deepest package owns a changed file, and different ecosystems at
 the same directory both own it. Private packages remain in dependency planning
-but receive no registry upload or package tag.
+but receive no shared version or registry upload.
 
 Duplicate names fail within each ecosystem, including private packages. npm and
 Cargo may share a name. Git, package-manager caches, and generated Cargo `target`
 directories are excluded. Workspace directory symlinks and symlinked ancestors
 are rejected; manifest symlinks must stay inside the repository.
 
-## Package versions and dependencies
+## Shared versions and dependencies
 
-Commit scopes do not choose packages: changed paths do. Renames include old and
-new paths; deletions and initial commits count, and merge changes use the first
-parent. Unowned root files and empty commits do not release packages.
-`[skip release]` and `[release skip]` skip the whole commit.
+semantic-release analyzes all repository commits since its last eligible release.
+`feat:` selects a minor, `fix:` a patch, and a breaking change a major; the
+strongest signal wins. The first release is `1.0.0` (or `1.0.0-alpha.1` on
+`alpha`), following semantic-release's normal rules. Documentation/chore-only
+changes and `[skip release]` / `[release skip]` commits do not trigger a release.
+Root-file changes and empty Conventional Commits can trigger a release.
 
-Use repository-relative `sharedFiles` globs to attribute shared changes to every
-package. Pass Conventional Commit analyzer options alongside them:
+Every public member receives exactly that version, including members without
+file changes and members in the other ecosystem. Private packages and
+`publish = false` crates stay unpublished. There is no independent-version mode
+or `synchronizeDependents` option; passing the removed option is an error.
 
-```js
-export default {
-  branches: ['main'],
-  tagFormat: 'workspace-v${version}',
-  plugins: [
-    [
-      'semantic-release-workspace',
-      {
-        sharedFiles: ['shared/**', 'build.config.js'],
-        // preset, config, presetConfig, parserOpts, releaseRules
-      },
-    ],
-  ],
-};
-```
+For example, after shared `1.2.0`, a `fix(core): correct parsing` commit publishes
+both `core` and unchanged `app` as `1.2.1`. A breaking Cargo change also advances
+the workspace's public npm packages to the same major version.
 
-By default, `feat:` releases a minor, `fix:` a patch, and breaking changes a
-major; documentation/chore-only changes do not release packages. Each package
-takes its strongest signal. Its baseline follows
-completed ancestor history or a newer reachable `npm/<name>@<version>` or
-`cargo/<name>@<version>` tag, then its declared semantic version. A package with
-no version starts at `1.0.0` on its first release; invalid versions fail.
-Each package retains its own unreleased commits across other packages' batches.
-Inherited Cargo versions are planned independently and written into prepared
-member manifests.
+Changed paths are used only to attribute package release notes. Renames include
+both paths; the deepest package owns a path. `sharedFiles` globs attribute shared
+changes to every member. Conventional Commit options (`preset`, `config`,
+`presetConfig`, `parserOpts`, `releaseRules`) apply to workspace version analysis.
 
-npm and Cargo packages are released independently by default: a change to a
-dependency does not release an unchanged dependent. A published dependent can
-continue using its existing dependency version. If both packages are already
-selected for release, incompatible internal requirements are updated to the new
-dependency version. When only the dependent is released, ensure its existing
-dependency requirement is available on the registry. Local workspace references
-are converted to registry requirements when the dependent is packed.
-
-To automatically synchronize dependents, set `synchronizeDependents: true` in
-the plugin options:
-
-```js
-plugins: [['semantic-release-workspace', { synchronizeDependents: true }]];
-```
-
-This restores the earlier coordination policy:
-- Out-of-range runtime, optional, and Cargo build requirements force at least a
-  patch release of the dependent; npm peer requirement changes force a major.
-- Dev-only updates appear in the plan without forcing a dependent release.
-  Cargo dev dependencies without a version stay local and are omitted from
-  published crates, matching native Cargo behavior.
-- npm `workspace:` aliases/shorthands and `file:`/`link:` references track local
-  versions. Optional declarations override duplicate normal dependencies.
-- With synchronization enabled, ordinary npm semver dependencies can still be
-  treated as internal when their ranges match the workspace package's declared
-  source version or recorded release history, even if they no longer match its
-  latest released version. Requirements ahead of that version stay external.
-  Incompatible registry requirements, registry aliases and git/URL references
-  remain external. Cargo registry-only and excluded/outside-workspace crates
-  remain external.
+Internal requirements update when the shared version is incompatible, and local
+workspace/path protocols are converted into registry requirements for packaging:
+- npm `workspace:` aliases/shorthands and `file:`/`link:` dependencies track the
+  shared version. Optional declarations override duplicate normal dependencies.
+- Ordinary npm semver requirements identify internal packages when compatible
+  with their declared source version or the last shared version. Unrelated
+  registry requirements, registry aliases and git/URL dependencies stay external.
+- Cargo path dependencies include inherited, renamed, target-specific and build
+  dependencies. Registry-only and excluded/outside-workspace crates stay external.
 - Cargo bare `1.2.3` means caret compatibility; npm bare `1.2.3` is exact.
-  Cargo comma-separated comparators intersect. Path-only Cargo runtime and
-  build dependencies receive a proposed version requirement.
-- Cycles settle without repeatedly incrementing a package. npm publication cycles
-  use a stable order; Cargo publication cycles are rejected.
+  Path-only Cargo runtime/build dependencies receive a version requirement.
+  Versionless Cargo dev dependencies remain local and are omitted by native Cargo.
+- Dependencies publish before dependents. npm cycles use deterministic order;
+  Cargo publication cycles fail before uploads.
 
-The option must be a boolean and defaults to `false`. When upgrading with an
-unfinished batch created by an earlier version, set it to `true` to retry the
-original frozen plan before changing policies. The source branch is not modified;
-see the prepared manifests and package artifacts for release-time changes. Cargo
-may temporarily update an unchanged dependent's requirement in the prepared
-workspace so its path dependency resolves; that dependent is not published and
-the temporary requirement is not carried forward as its published dependency.
-If a later release publishes that dependent with its older pinned requirement,
-the prepared tag can contain a local path requirement that does not match the
-latest workspace package version. Cargo may then reject commands run against
-the entire tagged workspace; the published crate still uses the pinned registry
-dependency. Update the source requirement, or enable synchronization before
-the core release, if the tagged workspace must resolve as a whole.
+The source branch and lockfiles are not committed by the plugin. Prepared
+manifests and published archives contain release-time versions and requirements;
+the checkout is restored afterward. Private Cargo dependencies may need temporary
+staging edits for native packaging, without receiving a public release.
 
-Coordinator batch versions are independent of package versions. The first batch
-is `workspace-v1.0.0`; single-default-branch operation uses a patch counter,
-while multi-branch operation uses the strongest planned release type.
-With an empty inventory, the plugin retains repository-wide lifecycle tracking.
+### Migrating from independent versions
+
+Finish any pending release with the old plugin before upgrading. The new plugin
+rejects pending independent-version journals rather than changing their frozen
+versions or bytes. Keep completed journals, artifact refs, and old package tags.
+
+The next shared coordinator version must be newer than prior package allocations
+and must not downgrade a declared public version. Review a dry-run against full
+Git history before enabling publication. Existing package tags are read only for
+migration checks; new releases create only `workspace-v<version>`. Do not delete
+release history to force a version through these checks.
 
 ## Release notes and changelogs
 
 Release notes group attributed Conventional Commits and dependency changes by
-package, label private packages, name actual npm destination tags, and use the
-source commit's date. Unchanged packages get no new entry. A collapsible JSON
+public package, name actual npm destination tags, and use the source commit's
+date. An unchanged member receives a maintenance entry for the shared release. A collapsible JSON
 plan and the plugin's publish result expose package versions, commits, dependency
 field locations, private flags, and ordered groups.
 
@@ -257,8 +220,8 @@ changelogs preserves earlier generated history without backfilling disabled rele
 Stable history excludes prereleases; prerelease history follows its identifier.
 
 Changelogs and versioned manifests live in the prepared release commit and,
-subject to native file selection, package archives. Read them through package
-tags or retained prepared refs. The source branch is not advanced; original
+subject to native file selection, package archives. Read them through
+retained prepared refs. The source branch is not advanced; original
 checkout bytes are restored and newly generated files removed after publication
 or failure. `publish: false` only records/previews notes and paths.
 
@@ -457,7 +420,7 @@ export default {
 };
 ```
 
-Prereleases have package-local counters such as `1.2.0-alpha.1` and
+Prereleases have one workspace counter such as `1.2.0-alpha.1` and
 `1.2.0-alpha.2`; stronger commit signals can advance the target stable version.
 Stable branches exclude prerelease baselines, and merging prerelease work creates
 stable package versions with coordinated stable dependency ranges. Different
@@ -470,27 +433,22 @@ last-release lookup cannot reliably recover them. Custom npm channels belong in
 numeric ranges such as `1.x` become `release-1.x`. Cargo uses SemVer/Git channel
 membership because registries have no dist-tags.
 
-Create maintenance branches from their historical release and advance higher
-branches before backports. `N.x` keeps each package within its own major line;
-`N.N.x` keeps its minor line. Package versions need not match branch numbers or
-the coordinator version. Conflicting allocations and bumps crossing an
-outstanding higher release are rejected. For dependency-only conflicts, release
-a higher dependent version on the higher branch or merge that release first.
+Create maintenance branches from their historical shared release and advance
+higher branches before backports. `N.x` and `N.N.x` constrain the shared version
+using semantic-release's normal branch ranges. Backmerge stable release history
+into `alpha` before starting the next prerelease line.
 
-A pending stable batch blocks new stable batches and promotions across branches,
-even for unrelated packages. Finish it first. Separate prerelease identifiers
-can advance when package allocations do not conflict; still serialize all jobs.
+A pending stable batch blocks new stable batches and promotions across branches.
+Finish it first. Separate prerelease identifiers retain their own histories;
+serialize all release jobs for the repository.
 
-Merging a higher stable branch into a lower one can promote its original versions
-through `addChannel`. The plugin checks retained artifacts and registry proofs,
-then moves npm tags; Cargo versions are reused without uploading. No package is
-rebuilt, republished, or signed again, and no new changelog entry is created.
-Promotions include packages unchanged in the latest batch, preserve newer
-published versions already reachable on the destination branch, and require
-retained publication history. Enabling publishing cannot promote planning-only
-versions into published history. The selected versions are retained for retries.
-Interrupted promotions recover on the same source commit; already-confirmed
-tag changes need no new CI credentials.
+Merging a higher stable branch into a lower one can promote a completed shared
+batch through `addChannel`. The plugin verifies retained artifacts and registry
+proofs before moving npm tags. Cargo versions are reused without uploading.
+No package is rebuilt, republished, or signed again, and no new changelog entry
+is created. A promotion selects a complete shared batch, preserving its single
+version; planning-only history cannot prove publication. Interrupted promotions
+recover with their frozen selection and original bytes.
 See semantic-release's [branch configuration](https://semantic-release.org/foundation/workflow-configuration/).
 
 ## Recovery and backups
@@ -498,11 +456,18 @@ See semantic-release's [branch configuration](https://semantic-release.org/found
 After a failure, restore the same source commit and configuration, then rerun,
 including from a fresh clone. Pending work blocks newer commits on that branch.
 Versions, destinations, authentication policy, notes, and retained artifacts stay
-fixed. New batch attempt tags may be allocated without changing package versions.
+fixed. If the workspace tag already exists, verification resumes the frozen
+publication before core decides whether a new release is needed. It creates no
+replacement version or tag. A successful recovery can therefore return
+semantic-release's `false` (no new release); the journal records completion.
+Other plugins' publish/success hooks are not replayed for that already-tagged
+release. Repair an external release announcement separately if needed.
+A dry-run logs the pending plan and validates retained publication evidence,
+but does not complete it.
 
-The source branch stays at its original commit. Package tags
-`npm/<name>@<version>` and `cargo/<name>@<version>` point to a prepared commit
-containing released manifests and optional changelogs. Existing checkout bytes
+The source branch stays at its original commit. The workspace tag identifies
+that source commit. Retained prepared refs contain released manifests and
+optional changelogs; their commit is also recorded in the publication journal. Existing checkout bytes
 are restored after success/failure; recovery rejects user edits and changed
 symlink paths rather than overwriting them. Lockfile changes stay in isolated
 packaging copies.
@@ -511,8 +476,7 @@ Artifacts are retained in Git before upload intent and limited to **100 MiB each
 An existing registry version is accepted only with matching retained bytes and
 this batch's recorded upload intent. Foreign versions, checksum mismatches,
 missing/corrupt artifacts, changed policy, and conflicting tags stop recovery.
-Visible accepted uploads and failed tag pushes can be reconciled without another
-upload; rejected uploads reuse artifacts with fresh credentials. If the upload
+Visible accepted uploads can be reconciled without another upload; rejected uploads reuse artifacts with fresh credentials. If the upload
 response is lost or the process crashes before recording its acknowledgment, a
 retry may upload the same retained artifact again when the version is not yet
 visible.
@@ -520,7 +484,7 @@ Published versions are irreversible: recovery completes remaining work without
 rolling back registry releases.
 
 Back up **all Git notes** and **`refs/semantic-release-workspace/*`**, together with
-ordinary package/coordinator tags. Standard clones or mirrors may need explicit
+workspace tags and historical package tags. Standard clones or mirrors may need explicit
 refspecs to preserve these namespaces. Do not delete journals to bypass a pending
 batch: restore damaged state. The exact ref layout and compatibility behavior
 are documented under [durable journals](https://github.com/enkhjile/semantic-release-workspace/blob/main/docs/architecture.md#durable-journals-and-channel-compatibility).

@@ -29,6 +29,9 @@ export interface PackagePlan {
   dependencyUpdates: DependencyUpdate[];
 }
 export interface ReleasePlan {
+  versioning?: 'shared';
+  version?: string;
+  releaseType?: ReleaseType;
   release?: {
     branch: string;
     type: string;
@@ -40,6 +43,7 @@ export interface ReleasePlan {
   baseHead: string | null;
   packages: PackagePlan[];
   groups: string[][];
+  // Read compatibility for completed journals written before shared versioning.
   dependencyPolicy?: 'independent' | 'synchronize';
   stagingDependencies?: DependencyUpdate[];
 }

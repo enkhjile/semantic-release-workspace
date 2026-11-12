@@ -80,7 +80,7 @@ test('publishing rejects a planning-only promotion before recording its channel'
 });
 
 test.each(['channel-write', 'generate-notes'] as const)(
-  'promotion freezes newer package artifacts across fresh-clone retries after %s failure',
+  'promotion freezes one shared batch of artifacts across fresh-clone retries after %s failure',
   async (failure) => {
     const repo = workspace();
     const service = await registry();
@@ -102,7 +102,7 @@ test.each(['channel-write', 'generate-notes'] as const)(
     const newer = repo
       .state()
       .planning.versions.find((entry: { id: string }) => entry.id === 'npm:a');
-    expect(newer.version).toBe('1.2.0');
+    expect(newer.version).toBe('1.1.0');
     let futureBase: string | undefined;
     if (failure === 'generate-notes') {
       change(repo, 'a', 'chore: prepare future a behavior');
@@ -113,7 +113,7 @@ test.each(['channel-write', 'generate-notes'] as const)(
     const before = service.state();
     result = repo.run({ ...settings, dryRun: true });
     expect(result.ok, result.logs).toBe(true);
-    expect(JSON.stringify(result.result)).toContain('## npm:a@1.2.0');
+    expect(JSON.stringify(result.result)).toContain('## npm:a@2.0.0');
     expect(JSON.stringify(result.result)).not.toContain('## npm:a@1.1.0');
     expect(repo.refs()).toBe(refs);
     expect(service.state().uploads).toEqual(before.uploads);
@@ -131,7 +131,7 @@ test.each(['channel-write', 'generate-notes'] as const)(
       ...(failure === 'generate-notes' ? { failure } : {}),
     });
     expect(result.ok, result.logs).toBe(false);
-    expect(service.state().npmTags.a.latest).toBe('1.2.0');
+    expect(service.state().npmTags.a.latest).toBe('1.1.0');
     const promotionRef = `refs/notes/workspace-release-channels/${createHash('sha256').update('main').digest('hex')}`;
     const pending = JSON.parse(
       repo.git(
@@ -144,7 +144,7 @@ test.each(['channel-write', 'generate-notes'] as const)(
     );
     expect(pending.status).toBe('pending');
     expect(pending.versions).toEqual([
-      newer,
+      { id: 'npm:a', version: '2.0.0', head: repo.state('next').head },
       { id: 'npm:b', version: '2.0.0', head: repo.state('next').head },
     ]);
 
@@ -165,18 +165,29 @@ test.each(['channel-write', 'generate-notes'] as const)(
     });
     expect(result.ok, result.logs).toBe(true);
     if (failure === 'generate-notes')
-      expect(service.state().npmTags.a.future).toBe('1.2.1');
+      expect(service.state().npmTags.a.future).toBe('1.1.1');
     else expect(service.state().npmTags.b.future).toBe('2.0.1');
     const uploads = service.state().uploads;
-    result = repo.run(settings, repo.clone('main'));
+    // Recovery must retain the frozen batch even when newer ancestor releases exist.
+    // Suppress a separate new release from the divergent main feature commit.
+    result = repo.run(
+      {
+        ...settings,
+        pluginConfig: {
+          ...settings.pluginConfig,
+          releaseRules: [{ type: 'feat', release: false }],
+        },
+      },
+      repo.clone('main'),
+    );
     expect(result.ok, result.logs).toBe(true);
-    expect(service.state().npmTags.a.latest).toBe('1.2.0');
+    expect(service.state().npmTags.a.latest).toBe('2.0.0');
     expect(service.state().npmTags.b.latest).toBe('2.0.0');
     expect(service.state().uploads).toEqual(uploads);
     if (failure === 'generate-notes') {
       expect(JSON.stringify(result.result)).toContain('## npm:b@2.0.0');
-      expect(JSON.stringify(result.result)).toContain('## npm:a@1.2.0');
-      expect(JSON.stringify(result.result)).not.toContain('## npm:a@1.2.1');
+      expect(JSON.stringify(result.result)).toContain('## npm:a@2.0.0');
+      expect(JSON.stringify(result.result)).not.toContain('## npm:a@1.1.1');
     }
     expect(
       JSON.parse(
@@ -242,5 +253,5 @@ test('empty workspaces can promote repository lifecycle batches with publication
   merge(repo);
   result = repo.run({ branches, pluginConfig: { publish: true } });
   expect(result.ok, result.logs).toBe(true);
-  expect(result.logs).toContain('Add default channel to tag workspace-v1.0.1');
+  expect(result.logs).toContain('Add default channel to tag workspace-v2.0.0');
 });

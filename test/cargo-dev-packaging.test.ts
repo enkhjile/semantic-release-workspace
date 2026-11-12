@@ -29,6 +29,9 @@ test.each([
   'Cargo preserves %s dev dependency packaging when helper release=%s',
   async (mode, bumpHelper) => {
     const repo = fixture();
+    repo.commit('feat: establish shared baseline');
+    const baseline = repo.run();
+    expect(baseline.ok, baseline.logs).toBe(true);
     const service = await registry();
     const privateHelper = mode !== 'versioned' && mode !== 'shared';
     const inherited = mode === 'inherited' || mode === 'shared';

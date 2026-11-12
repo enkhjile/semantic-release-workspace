@@ -22,7 +22,10 @@ afterEach(() => {
 });
 
 async function setup() {
-  const repo = fixture({ synchronizeDependents: true });
+  const repo = fixture();
+  repo.commit('feat: establish shared baseline');
+  const baseline = repo.run();
+  expect(baseline.ok, baseline.logs).toBe(true);
   const service = await registry();
   const inherited =
     'version.workspace = true\nedition.workspace = true\nlicense.workspace = true\n';
@@ -125,11 +128,11 @@ async function publishedManifest(
 async function assertPublished(service: Awaited<ReturnType<typeof registry>>) {
   expect(service.state().uploads).toEqual([
     'cargo:nested-core@1.1.0',
-    'cargo:nested-adapter@1.0.1',
+    'cargo:nested-adapter@1.1.0',
   ]);
   for (const [name, version] of [
     ['nested-core', '1.1.0'],
-    ['nested-adapter', '1.0.1'],
+    ['nested-adapter', '1.1.0'],
   ] as const) {
     const manifest = await publishedManifest(service, name, version);
     expect(manifest.package).toMatchObject({
@@ -167,7 +170,8 @@ test('Cargo publishes a nested member through private inherited ancestors while 
       .tags()
       .filter((tag) => tag.startsWith('cargo/'))
       .sort(),
-  ).toEqual(['cargo/nested-adapter@1.0.1', 'cargo/nested-core@1.1.0']);
+  ).toEqual([]);
+  expect(repo.tags()).toContain('workspace-v1.1.0');
   unchanged();
   const before = service.state();
   const completedRefs = repo.refs();
@@ -247,11 +251,9 @@ process.exit(result.status ?? 1);
     else expect(completedArtifacts[1]).toBeDefined();
     for (const entry of completed.execution.packages)
       expect(entry.artifact.sha256).toBe(
-        service.state().cargo[entry.id.slice('cargo:'.length)][
-          entry.id === 'cargo:nested-core' ? '1.1.0' : '1.0.1'
-        ].cksum,
+        service.state().cargo[entry.id.slice('cargo:'.length)]['1.1.0'].cksum,
       );
-    expect(repo.tags()).toContain('cargo/nested-adapter@1.0.1');
+    expect(repo.tags()).toContain('workspace-v1.1.0');
     unchanged(clone);
   },
 );

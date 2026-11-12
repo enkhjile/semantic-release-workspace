@@ -12,7 +12,10 @@ afterEach(() => {
 });
 
 test('npm resumes alpha releases after stable promotion and backmerge, coordinating exact dependencies', async () => {
-  const repo = fixture({ synchronizeDependents: true });
+  const repo = fixture();
+  repo.commit('feat: establish shared baseline');
+  const baseline = repo.run();
+  expect(baseline.ok, baseline.logs).toBe(true);
   const service = await registry();
   const settings = {
     branches: ['main', { name: 'alpha', prerelease: true }],
@@ -71,9 +74,7 @@ test('npm resumes alpha releases after stable promotion and backmerge, coordinat
         ),
       ),
     ).toMatchObject({ name: 'app', version: app, dependencies: { lib } });
-    expect(repo.tags()).toEqual(
-      expect.arrayContaining([`npm/lib@${lib}`, `npm/app@${app}`]),
-    );
+    expect(repo.tags()).toEqual(expect.arrayContaining([`workspace-v${lib}`]));
     expect(repo.git(repo.cwd, 'status', '--porcelain')).toBe('');
     expect(
       ['lib', 'app'].map((name) =>
@@ -94,10 +95,10 @@ test('npm resumes alpha releases after stable promotion and backmerge, coordinat
   repo.git(repo.cwd, 'checkout', '-b', 'alpha');
   repo.git(repo.cwd, 'push', '-u', 'origin', 'alpha');
   change(2, 'feat: improve library');
-  await release('alpha', '1.2.0-alpha.1', '1.1.1-alpha.1');
+  await release('alpha', '1.2.0-alpha.1', '1.2.0-alpha.1');
   expect(service.state().npmTags).toEqual({
     lib: { latest: '1.1.0', alpha: '1.2.0-alpha.1' },
-    app: { latest: '1.1.0', alpha: '1.1.1-alpha.1' },
+    app: { latest: '1.1.0', alpha: '1.2.0-alpha.1' },
   });
 
   const alphaHead = repo.git(repo.cwd, 'rev-parse', 'HEAD');
@@ -105,10 +106,10 @@ test('npm resumes alpha releases after stable promotion and backmerge, coordinat
   repo.git(repo.cwd, 'merge', '--no-ff', 'alpha', '-m', 'chore: merge alpha');
   repo.git(repo.cwd, 'push', 'origin', 'main');
   expect(repo.git(repo.cwd, 'rev-parse', 'HEAD^2')).toBe(alphaHead);
-  await release('main', '1.2.0', '1.1.1');
+  await release('main', '1.2.0', '1.2.0');
   expect(service.state().npmTags).toEqual({
     lib: { latest: '1.2.0', alpha: '1.2.0-alpha.1' },
-    app: { latest: '1.1.1', alpha: '1.1.1-alpha.1' },
+    app: { latest: '1.2.0', alpha: '1.2.0-alpha.1' },
   });
 
   const stableHead = repo.git(repo.cwd, 'rev-parse', 'HEAD');
@@ -122,7 +123,6 @@ test('npm resumes alpha releases after stable promotion and backmerge, coordinat
   const dry = repo.run({ ...settings, dryRun: true });
   expect(dry.ok, dry.logs).toBe(true);
   expect(JSON.stringify(dry.result)).toContain('1.2.1-alpha.1');
-  expect(JSON.stringify(dry.result)).toContain('1.1.2-alpha.1');
   expect(repo.refs()).toBe(refs);
   expect(service.state().uploads).toEqual(beforeDryRun.uploads);
   expect(service.state().npmTags).toEqual(beforeDryRun.npmTags);
@@ -139,24 +139,24 @@ test('npm resumes alpha releases after stable promotion and backmerge, coordinat
     ),
   );
 
-  await release('alpha', '1.2.1-alpha.1', '1.1.2-alpha.1');
+  await release('alpha', '1.2.1-alpha.1', '1.2.1-alpha.1');
   change(4, 'fix: correct another library issue');
-  await release('alpha', '1.2.1-alpha.2', '1.1.2-alpha.2');
+  await release('alpha', '1.2.1-alpha.2', '1.2.1-alpha.2');
   expect(service.state().npmTags).toEqual({
     lib: { latest: '1.2.0', alpha: '1.2.1-alpha.2' },
-    app: { latest: '1.1.1', alpha: '1.1.2-alpha.2' },
+    app: { latest: '1.2.0', alpha: '1.2.1-alpha.2' },
   });
   expect(service.state().uploads).toEqual([
     'npm:lib@1.1.0',
     'npm:app@1.1.0',
     'npm:lib@1.2.0-alpha.1',
-    'npm:app@1.1.1-alpha.1',
+    'npm:app@1.2.0-alpha.1',
     'npm:lib@1.2.0',
-    'npm:app@1.1.1',
+    'npm:app@1.2.0',
     'npm:lib@1.2.1-alpha.1',
-    'npm:app@1.1.2-alpha.1',
+    'npm:app@1.2.1-alpha.1',
     'npm:lib@1.2.1-alpha.2',
-    'npm:app@1.1.2-alpha.2',
+    'npm:app@1.2.1-alpha.2',
   ]);
   const completeRefs = repo.refs();
   const completeRegistry = service.state();

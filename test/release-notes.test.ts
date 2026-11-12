@@ -10,7 +10,10 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 function workspace() {
-  const repo = fixture({ synchronizeDependents: true });
+  const repo = fixture();
+  repo.commit('feat: establish shared baseline');
+  const baseline = repo.run();
+  expect(baseline.ok, baseline.logs).toBe(true);
   writeFileSync(
     join(repo.cwd, 'package.json'),
     JSON.stringify({ private: true, workspaces: ['packages/*'] }),
@@ -81,8 +84,8 @@ test('real semantic-release emits isolated npm and Cargo notes with breaking and
   expect(text).toContain('npm channel: `latest`');
   expect(text).toContain('Cargo uses SemVer');
   const visible = text.split('```json')[0] ?? '';
-  const lib = visible.split('## npm:lib@1.1.0')[1]?.split('\n## ')[0];
-  const app = visible.split('## npm:app@1.0.1')[1]?.split('\n## ')[0];
+  const lib = visible.split('## npm:lib@2.0.0')[1]?.split('\n## ')[0];
+  const app = visible.split('## npm:app@2.0.0')[1]?.split('\n## ')[0];
   const cargo = visible.split('## cargo:core@2.0.0')[1]?.split('\n## ')[0];
   expect(lib).toContain('add library search');
   expect(lib).not.toContain('replace old Rust API');
@@ -103,8 +106,9 @@ test('pending package notes are retained across a fresh clone and no-change runs
     frozen.packages.find((pkg: { id: string }) => pkg.id === 'npm:lib').notes,
   ).toContain('readable library feature');
   const clone = repo.clone();
-  const text = notes(repo.run({}, clone));
-  expect(text).toContain('readable library feature');
+  const retry = repo.run({}, clone);
+  expect(retry.ok, retry.logs).toBe(true);
+  expect(retry.result).toBe(false);
   expect(repo.state().planning.releaseNotes).toEqual(frozen);
   const refs = repo.refs();
   const noChange = repo.run({}, clone);
@@ -144,7 +148,7 @@ test('channel promotion summarizes retained notes for unchanged package versions
   const text = notes(repo.run({ branches, dryRun: true }));
   expect(text).toContain('# Workspace channel promotion');
   expect(text).toContain('npm channel: `latest`');
-  expect(text).toContain('new application');
+  expect(text).not.toContain('new application');
   expect(text).toContain('adopt new library API');
   expect(text).toContain('No new changelog entries');
 });
@@ -216,7 +220,7 @@ test('summaries use the source commit date and actual npm tag without inventing 
   );
   expect(text).toContain('Source date: 2001-02-03');
   expect(text).toContain('npm channel: `preview`\n');
-  expect(text).toContain('## npm:app@1.0.1 (private)');
+  expect(text).not.toContain('## npm:app@');
 });
 
 test('relative root presets resolve consistently for version analysis and package notes', () => {

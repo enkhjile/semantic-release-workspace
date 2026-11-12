@@ -1,32 +1,19 @@
 import { resolve } from 'node:path';
 import SemanticReleaseError from '@semantic-release/error';
-import { inc, ltr, satisfies, valid, validRange } from 'semver';
+import { satisfies, valid, validRange } from 'semver';
 import { packageId } from './attribution.js';
-import type {
-  DependencyUpdate,
-  PackagePlan,
-  ReleaseType,
-} from './plan-types.js';
+import type { DependencyUpdate, PackagePlan } from './plan-types.js';
 import { record } from './workspace-files.js';
 import type {
   WorkspaceInventory,
   WorkspacePackage,
 } from './workspace-types.js';
 
-type Projection = (
-  owner: string,
-  manifestPath: string,
-  field: string[],
-  value: string | null,
-  dependency: string,
-) => string | null;
 interface Edge {
   owner: string;
   target: string;
-  kind: 'runtime' | 'dev' | 'peer';
   ecosystem: 'npm' | 'cargo';
   spec: string | null;
-  source: string | null;
   range: string | null;
   protocol: 'semver' | 'workspace' | 'local';
   alias: boolean;
@@ -60,9 +47,6 @@ function npmEdges(
   pkg: WorkspacePackage,
   inventory: WorkspaceInventory,
   plans: Map<string, PackagePlan>,
-  project: Projection,
-  synchronizeDependents: boolean,
-  knownVersions: Map<string, Set<string>>,
 ): Edge[] {
   const edges: Edge[] = [];
   for (const section of [
@@ -75,18 +59,17 @@ function npmEdges(
     if (table === undefined) continue;
     if (!record(table))
       dependencyError(`Invalid ${section} in ${packageId(pkg)}.`);
-    for (const [name, rawSpec] of Object.entries(table)) {
+    for (const [name, spec] of Object.entries(table)) {
       if (
         section === 'dependencies' &&
         record(pkg.manifest.optionalDependencies) &&
         name in pkg.manifest.optionalDependencies
       )
         continue;
-      if (typeof rawSpec !== 'string')
+      if (typeof spec !== 'string')
         dependencyError(`Invalid dependency ${name} in ${packageId(pkg)}.`);
       const manifestPath = `${pkg.path}/package.json`;
       const field = [section, name];
-      let spec = rawSpec;
       let targetName = name;
       let range = spec;
       let protocol: Edge['protocol'] = 'semver';
@@ -120,38 +103,22 @@ function npmEdges(
           );
         continue;
       }
-      spec =
-        project(
-          packageId(pkg),
-          manifestPath,
-          field,
-          rawSpec,
-          packageId(target),
-        ) ?? rawSpec;
-      range =
-        protocol === 'workspace'
-          ? spec.slice(alias ? `workspace:${target.name}@`.length : 10)
-          : spec;
-      const current = plans.get(packageId(target))?.currentVersion ?? '1.0.0';
+      const sourceVersion = target.manifest.version;
+      const current =
+        plans.get(packageId(target))?.currentVersion ??
+        (typeof sourceVersion === 'string' && valid(sourceVersion)
+          ? sourceVersion
+          : '1.0.0');
       if (protocol === 'workspace' && ['*', '^', '~'].includes(range))
         range = range === '*' ? '*' : `${range}${current}`;
       if (path) range = '*';
       if (!validRange(range))
         dependencyError(`Unsupported internal workspace reference: ${spec}`);
-      const sourceVersion = target.manifest.version;
-      const sourceRange = rawSpec.slice(
-        alias ? `workspace:${target.name}@`.length : 10,
-      );
+      // Release preparation restores source manifests, including their earlier pins.
       const sourceCompatible =
-        protocol === 'workspace' &&
         typeof sourceVersion === 'string' &&
         valid(sourceVersion) &&
-        (path ||
-          ['*', '^', '~'].includes(sourceRange) ||
-          (validRange(sourceRange) &&
-            satisfies(sourceVersion, sourceRange, {
-              includePrerelease: true,
-            })));
+        satisfies(sourceVersion, range, { includePrerelease: true });
       if (
         !satisfies(current, range, { includePrerelease: true }) &&
         !sourceCompatible
@@ -160,32 +127,13 @@ function npmEdges(
           dependencyError(
             `Workspace dependency does not accept its current version: ${spec}`,
           );
-        if (
-          !synchronizeDependents ||
-          ltr(current, rawSpec, { includePrerelease: true }) ||
-          ![
-            ...(typeof sourceVersion === 'string' && valid(sourceVersion)
-              ? [sourceVersion]
-              : []),
-            ...(knownVersions.get(packageId(target)) ?? []),
-          ].some((version) =>
-            satisfies(version, rawSpec, { includePrerelease: true }),
-          )
-        )
-          continue; // The requirement selects an external registry version.
+        continue; // The requirement selects an external registry version.
       }
       edges.push({
         owner: packageId(pkg),
         target: packageId(target),
-        kind:
-          section === 'devDependencies'
-            ? 'dev'
-            : section === 'peerDependencies'
-              ? 'peer'
-              : 'runtime',
         ecosystem: 'npm',
         spec,
-        source: rawSpec,
         range,
         protocol,
         alias,
@@ -200,7 +148,6 @@ function cargoEdges(
   pkg: WorkspacePackage,
   inventory: WorkspaceInventory,
   workspace: Record<string, unknown>,
-  project: Projection,
 ): Edge[] {
   const data = pkg.manifest;
   const tables: { data: Record<string, unknown>; field: string[] }[] = [
@@ -252,23 +199,14 @@ function cargoEdges(
           );
         if (value.version !== undefined && typeof value.version !== 'string')
           dependencyError(`Invalid Cargo dependency version: ${name}`);
-        const source = typeof value.version === 'string' ? value.version : null;
+        const spec = typeof value.version === 'string' ? value.version : null;
         // Cargo omits path-only dev dependencies from published crates.
-        if (section.startsWith('dev') && source === null) continue;
-        const spec = project(
-          packageId(pkg),
-          manifestPath,
-          [...field, 'version'],
-          source,
-          packageId(target),
-        );
+        if (section.startsWith('dev') && spec === null) continue;
         const edge: Edge = {
           owner: packageId(pkg),
           target: packageId(target),
-          kind: section.startsWith('dev') ? 'dev' : 'runtime',
           ecosystem: 'cargo',
           spec,
-          source,
           range: spec,
           protocol: spec === null ? 'local' : 'semver',
           alias: false,
@@ -310,7 +248,7 @@ function update(edge: Edge, target: PackagePlan): DependencyUpdate | undefined {
     dependency: edge.target,
     manifestPath: edge.manifestPath,
     field: edge.field,
-    from: edge.source,
+    from: edge.spec,
     to,
     publishedRange,
   };
@@ -359,93 +297,19 @@ export function coordinateDependencies(
   inventory: WorkspaceInventory,
   packages: PackagePlan[],
   workspace: Record<string, unknown>,
-  previousRanges: DependencyUpdate[] = [],
-  nextVersion: (current: string | null, type: ReleaseType) => string | null = (
-    current,
-    type,
-  ) => (current ? inc(current, type) : '1.0.0'),
-  synchronizeDependents = false,
-  synchronizeIncompatible = synchronizeDependents,
-  knownVersions = new Map<string, Set<string>>(),
 ): {
   groups: string[][];
   dependencyRanges: DependencyUpdate[];
   stagingDependencies: DependencyUpdate[];
 } {
   const byId = new Map(packages.map((pkg) => [pkg.id, pkg]));
-  const applied: { owner: string; update: DependencyUpdate }[] = [];
   const key = (manifestPath: string, field: string[]) =>
     JSON.stringify([manifestPath, field]);
-  const prior = new Map(
-    previousRanges.map((entry) => [
-      key(entry.manifestPath, entry.field),
-      entry,
-    ]),
-  );
-  const project: Projection = (
-    owner,
-    manifestPath,
-    field,
-    value,
-    dependency,
-  ) => {
-    const identity = key(manifestPath, field);
-    const previous = prior.get(identity);
-    if (
-      previous &&
-      previous.from === value &&
-      previous.dependency === dependency
-    ) {
-      applied.push({ owner, update: previous });
-      return previous.to;
-    }
-    return value;
-  };
   const edges = inventory.packages.flatMap((pkg) =>
     pkg.ecosystem === 'npm'
-      ? npmEdges(
-          pkg,
-          inventory,
-          byId,
-          project,
-          synchronizeIncompatible,
-          knownVersions,
-        )
-      : cargoEdges(pkg, inventory, workspace, project),
+      ? npmEdges(pkg, inventory, byId)
+      : cargoEdges(pkg, inventory, workspace),
   );
-  const rank = { patch: 1, minor: 2, major: 3 };
-  let changed = synchronizeDependents;
-  while (changed) {
-    changed = false;
-    for (const edge of edges) {
-      const target = byId.get(edge.target);
-      const owner = byId.get(edge.owner);
-      if (!target || !owner || edge.kind === 'dev' || !update(edge, target))
-        continue;
-      const required: ReleaseType = edge.kind === 'peer' ? 'major' : 'patch';
-      if (!owner.type || rank[owner.type] < rank[required]) {
-        owner.type = required;
-        owner.nextVersion = nextVersion(owner.currentVersion, required);
-        changed = true;
-      }
-    }
-  }
-  // Retain matched projections even when their ranges become external.
-  // This makes every persisted projection reviewable against the completed plan.
-  const retained = new Map<string, DependencyUpdate>();
-  for (const { owner: ownerId, update: previous } of applied) {
-    const identity = key(previous.manifestPath, previous.field);
-    const owner = byId.get(ownerId);
-    if (
-      owner &&
-      !owner.dependencyUpdates.some(
-        (entry) => key(entry.manifestPath, entry.field) === identity,
-      )
-    ) {
-      retained.set(identity, previous);
-      owner.dependencyUpdates.push(previous);
-    }
-  }
   const staging = new Map<string, DependencyUpdate>();
   for (const edge of edges) {
     const target = byId.get(edge.target);
@@ -453,7 +317,7 @@ export function coordinateDependencies(
     if (!target || !owner) continue;
     const proposed = update(edge, target);
     if (!proposed) continue;
-    if (!synchronizeDependents && !owner.type) {
+    if (!owner.type) {
       // Keep the prepared Cargo workspace resolvable without releasing or
       // carrying this temporary change forward as a published dependency.
       if (edge.ecosystem === 'cargo')
@@ -470,7 +334,7 @@ export function coordinateDependencies(
   }
   return {
     groups: groups(packages, edges),
-    dependencyRanges: [...retained.values()],
+    dependencyRanges: [],
     stagingDependencies: [...staging.values()],
   };
 }

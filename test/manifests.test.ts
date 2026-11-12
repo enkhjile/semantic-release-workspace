@@ -32,7 +32,7 @@ test('JSON edits retain unknown fields and original indentation', () => {
   expect(result).toContain('\t"version"');
 });
 
-test('Cargo explicit inheritance subtables become valid independent versions', () => {
+test('Cargo explicit inheritance subtables become valid package versions', () => {
   const before =
     '[package]\nname = "app"\n[package.version]\nworkspace = true # keep\n[dependencies]\n';
   const result = editManifest('Cargo.toml', before, [

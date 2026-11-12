@@ -490,12 +490,7 @@ function npmArtifactManifest(
       const update = pkg.dependencyUpdates.find(
         (entry) => entry.field[0] === section && entry.field[1] === name,
       );
-      // Marker-free pending plans retain the packaging rules they froze.
-      if (
-        plan.dependencyPolicy === undefined ||
-        (!path && !['*', '^', '~'].includes(ref))
-      )
-        range = update?.publishedRange ?? range;
+      range = update?.publishedRange ?? range;
       if ((alias || name !== target.name) && !range.startsWith('npm:'))
         range = `npm:${target.name}@${range}`;
       edits.push({ field: [section, name], value: range });
@@ -781,7 +776,19 @@ export async function pack(
             entry.path !== '.',
         )
         .map((entry) => entry.path);
-      if (pkg.path !== '.') delete workspace.package;
+      if (pkg.path !== '.')
+        // Virtual workspace roots cannot retain the root package's dependencies or targets.
+        for (const key of Object.keys(workspace))
+          if (
+            ![
+              'workspace',
+              'profile',
+              'patch',
+              'replace',
+              'cargo-features',
+            ].includes(key)
+          )
+            delete workspace[key];
       await writeFile(workspaceFile, stringify(workspace));
     }
     const local = { ...context, cwd: join(source, pkg.path) };

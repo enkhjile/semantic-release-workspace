@@ -25,6 +25,9 @@ afterEach(() => {
 });
 function workspace(directory = 'packages') {
   const repo = fixture();
+  repo.commit('feat: establish shared baseline');
+  const baseline = repo.run();
+  expect(baseline.ok, baseline.logs).toBe(true);
   writeFileSync(
     join(repo.cwd, 'package.json'),
     JSON.stringify({ private: true, workspaces: [`${directory}/*`] }),
@@ -70,15 +73,32 @@ test('unavailable registry stops before creating publication intent', () => {
     pluginConfig: { publish: true, npm: { registry: 'http://127.0.0.1:1' } },
   });
   expect(result.ok).toBe(false);
-  expect(repo.refs()).not.toContain('refs/notes/semantic-release-workspace');
-  expect(repo.tags()).toEqual([]);
+  expect(repo.state().status).toBe('complete');
+  expect(repo.tags()).toEqual(['workspace-v1.0.0']);
   expect(
     readFileSync(join(repo.cwd, 'packages/lib/package.json'), 'utf8'),
   ).toBe(before);
   expect(repo.git(repo.cwd, 'status', '--porcelain')).toBe('');
 });
 
-test('npm publishes retained bytes, tags released manifests, restores the checkout and skips no-change runs', async () => {
+test('shared publication creates only the workspace release tag', async () => {
+  const repo = workspace();
+  const service = await registry();
+  const result = repo.run({
+    env: service.env,
+    pluginConfig: { publish: true, npm: { registry: service.url } },
+  });
+  expect(result.ok, result.logs).toBe(true);
+  expect(result.result).not.toBe(false);
+  if (!result.result) throw new Error('Expected a shared release');
+  expect(repo.tags()).toEqual([
+    'workspace-v1.0.0',
+    result.result.nextRelease.gitTag,
+  ]);
+  expect(repo.state().execution.packages[0]).not.toHaveProperty('tagged');
+});
+
+test('npm publishes retained bytes, retains released manifests, restores the checkout and skips no-change runs', async () => {
   const repo = workspace();
   const service = await registry();
   const settings = {
@@ -91,13 +111,13 @@ test('npm publishes retained bytes, tags released manifests, restores the checko
   const result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
   expect(service.state().uploads).toEqual(['npm:publication-fixture@1.1.0']);
-  expect(repo.tags()).toContain('npm/publication-fixture@1.1.0');
+  expect(repo.tags()).toContain('workspace-v1.1.0');
   expect(
     JSON.parse(
       repo.git(
         repo.remote,
         'show',
-        'npm/publication-fixture@1.1.0:packages/lib/package.json',
+        `${repo.state().execution.prepared}:packages/lib/package.json`,
       ),
     ).version,
   ).toBe('1.1.0');
@@ -107,7 +127,7 @@ test('npm publishes retained bytes, tags released manifests, restores the checko
       readFileSync(join(repo.cwd, 'packages/lib/package.json'), 'utf8'),
     ).version,
   ).toBe('1.0.0');
-  expect(repo.state().execution.packages[0].tagged).toBe(true);
+  expect(repo.state().execution.packages[0].published).toBe(true);
   const retry = repo.run(settings, repo.clone());
   expect(retry.ok, retry.logs).toBe(true);
   expect(retry.result).toBe(false);
@@ -203,16 +223,20 @@ test('Cargo publishes dependency-first using verified native crate artifacts and
     'cargo:fixture-core@1.1.0',
     'cargo:fixture-app@1.1.0',
   ]);
-  expect(repo.tags()).toContain('cargo/fixture-app@1.1.0');
+  expect(repo.tags()).toContain('workspace-v1.1.0');
   expect(
     repo.git(
       repo.remote,
       'show',
-      'cargo/fixture-core@1.1.0:crates/core/Cargo.toml',
+      `${repo.state().execution.prepared}:crates/core/Cargo.toml`,
     ),
   ).toContain('version = "1.1.0" # preserve comment');
   expect(
-    repo.git(repo.remote, 'show', 'cargo/fixture-core@1.1.0:Cargo.toml'),
+    repo.git(
+      repo.remote,
+      'show',
+      `${repo.state().execution.prepared}:Cargo.toml`,
+    ),
   ).toContain('version = "=1.1.0"');
   expect(repo.git(repo.cwd, 'status', '--porcelain')).toBe('');
   expect(repo.state().status).toBe('complete');
@@ -220,6 +244,9 @@ test('Cargo publishes dependency-first using verified native crate artifacts and
 
 async function cargoWorkspace() {
   const repo = fixture();
+  repo.commit('feat: establish shared baseline');
+  const baseline = repo.run();
+  expect(baseline.ok, baseline.logs).toBe(true);
   const service = await registry();
   mkdirSync(join(repo.cwd, '.cargo'));
   mkdirSync(join(repo.cwd, 'crates/core/src'), { recursive: true });
@@ -304,10 +331,7 @@ test.each(['redirect:', 'redirect-put:'])(
     ).toBe(true);
     expect(result.logs).not.toContain('fixture-token');
     if (mode === 'redirect-put:') expect(repo.state().status).toBe('pending');
-    else
-      expect(repo.refs()).not.toContain(
-        'refs/notes/semantic-release-workspace',
-      );
+    else expect(repo.state().status).toBe('complete');
   },
 );
 
@@ -325,7 +349,6 @@ test('fresh clone confirms an accepted npm upload after registry verification wa
   expect(repo.state().execution.packages[0]).toMatchObject({
     intent: true,
     published: false,
-    tagged: false,
   });
   const artifact = repo.state().execution.packages[0].artifact;
   service.control('');
@@ -335,13 +358,13 @@ test('fresh clone confirms an accepted npm upload after registry verification wa
   expect(service.state().uploads).toHaveLength(1);
 });
 
-test('package tag push failure retries from a fresh clone without another registry upload', async () => {
+test('workspace tag push failure retries from a fresh clone before any registry upload', async () => {
   const repo = workspace();
   const service = await registry();
   const hook = join(repo.remote, 'hooks/update');
   writeFileSync(
     hook,
-    '#!/bin/sh\ncase "$1" in refs/tags/npm/*) exit 1;; esac\n',
+    '#!/bin/sh\ncase "$1" in refs/tags/workspace-v1.1.0) exit 1;; esac\n',
   );
   chmodSync(hook, 0o755);
   const settings = {
@@ -350,15 +373,13 @@ test('package tag push failure retries from a fresh clone without another regist
   };
   const first = repo.run(settings);
   expect(first.ok).toBe(false);
-  expect(repo.state().execution.packages[0]).toMatchObject({
-    published: true,
-    tagged: false,
-  });
+  expect(service.state().uploads).toEqual([]);
+  expect(repo.state().execution.packages[0].published).toBe(false);
   unlinkSync(hook);
   const retry = repo.run(settings, repo.clone());
   expect(retry.ok, retry.logs).toBe(true);
   expect(service.state().uploads).toHaveLength(1);
-  expect(repo.tags()).toContain('npm/publication-fixture@1.1.0');
+  expect(repo.tags()).toContain('workspace-v1.1.0');
 });
 
 test('foreign npm version is rejected even when its artifact matches', async () => {
@@ -374,7 +395,7 @@ test('foreign npm version is rejected even when its artifact matches', async () 
   expect(result.ok).toBe(false);
   expect(result.codes).toContain('EWORKSPACECONFLICT');
   expect(service.state().uploads).toHaveLength(1);
-  expect(second.tags().some((tag) => tag.startsWith('npm/'))).toBe(false);
+  expect(second.tags()).toEqual(['workspace-v1.0.0']);
 });
 
 test('npm workspace aliases and local dependencies are converted only in the artifact; private packages stay unpublished', async () => {
@@ -422,7 +443,7 @@ test('npm workspace aliases and local dependencies are converted only in the art
     repo.git(
       repo.remote,
       'show',
-      'npm/fixture-app@1.1.0:packages/app/package.json',
+      `${repo.state().execution.prepared}:packages/app/package.json`,
     ),
   ).toContain('workspace:publication-fixture@^');
   expect(repo.tags().some((tag) => tag.includes('private-tool'))).toBe(false);
@@ -521,11 +542,14 @@ test('changing the pending registry or deleting its retained artifact blocks ret
     pluginConfig: { publish: true, npm: { registry: service.url } },
   };
   expect(repo.run(settings).ok).toBe(false);
-  const changed = repo.run({
-    ...settings,
-    pluginConfig: { publish: true, npm: { registry: other.url } },
-  });
-  expect(changed.codes).toContain('EWORKSPACEPLAN');
+  for (const dryRun of [true, false]) {
+    const changed = repo.run({
+      ...settings,
+      dryRun,
+      pluginConfig: { publish: true, npm: { registry: other.url } },
+    });
+    expect(changed.codes, changed.logs).toContain('EWORKSPACEPLAN');
+  }
   expect(other.state().requests).toEqual([]);
   repo.git(
     repo.remote,
@@ -537,6 +561,30 @@ test('changing the pending registry or deleting its retained artifact blocks ret
   const retry = repo.run(settings, repo.clone());
   expect(retry.ok).toBe(false);
   expect(retry.codes).toContain('EWORKSPACEARTIFACT');
+  expect(service.state().uploads).toEqual([]);
+});
+
+test('fresh-clone dry-run rejects a missing prepared ref even when retained artifacts keep its commit reachable', async () => {
+  const repo = workspace();
+  const service = await registry();
+  service.control('reject');
+  const settings = {
+    env: service.env,
+    pluginConfig: { publish: true, npm: { registry: service.url } },
+  };
+  expect(repo.run(settings).ok).toBe(false);
+  const state = repo.state();
+  expect(state.execution.packages[0].artifact).toBeDefined();
+  repo.git(
+    repo.remote,
+    'update-ref',
+    '-d',
+    `refs/semantic-release-workspace/prepared/${state.head}`,
+  );
+  const before = repo.refs();
+  const preview = repo.run({ ...settings, dryRun: true }, repo.clone());
+  expect(preview.codes, preview.logs).toContain('EWORKSPACEARTIFACT');
+  expect(repo.refs()).toBe(before);
   expect(service.state().uploads).toEqual([]);
 });
 
@@ -716,7 +764,7 @@ test('Cargo publish registry allowlist is enforced before any registry request',
   expect(result.ok).toBe(false);
   expect(result.codes).toContain('EWORKSPACECONFIG');
   expect(service.state().requests).toEqual([]);
-  expect(repo.tags()).toEqual([]);
+  expect(repo.tags()).toEqual(['workspace-v1.0.0']);
 });
 
 test.each(['restricted', null])(
@@ -840,7 +888,7 @@ test('npm origin-bound transport preserves scoped client certificates and custom
   ).toBe(true);
 });
 
-test('fresh clone restores a missing package tag from a partially completed batch without republishing', async () => {
+test('fresh clone completes a published batch after a downstream plugin failure without new tags or uploads', async () => {
   const repo = workspace();
   const service = await registry();
   const settings = {
@@ -849,17 +897,13 @@ test('fresh clone restores a missing package tag from a partially completed batc
   };
   const first = repo.run({ ...settings, failure: 'publish' });
   expect(first.ok).toBe(false);
-  expect(repo.state().execution.packages[0].tagged).toBe(true);
-  repo.git(
-    repo.remote,
-    'update-ref',
-    '-d',
-    'refs/tags/npm/publication-fixture@1.1.0',
-  );
+  expect(repo.state().execution.packages[0].published).toBe(true);
+  const tags = repo.tags();
   const retry = repo.run(settings, repo.clone());
   expect(retry.ok, retry.logs).toBe(true);
   expect(service.state().uploads).toHaveLength(1);
-  expect(repo.tags()).toContain('npm/publication-fixture@1.1.0');
+  expect(repo.tags()).toEqual(tags);
+  expect(repo.state().status).toBe('complete');
 });
 
 test('malformed Cargo registry responses cannot expose echoed credentials in release logs', async () => {
@@ -900,5 +944,5 @@ test('a foreign later package version blocks the whole batch before any new uplo
   const result = repo.run(settings);
   expect(result.codes).toContain('EWORKSPACECONFLICT');
   expect(service.state().uploads).toEqual(['npm:z-taken@1.1.0']);
-  expect(repo.tags()).toEqual([]);
+  expect(repo.tags()).toEqual(['workspace-v1.0.0']);
 });

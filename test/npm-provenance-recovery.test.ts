@@ -83,7 +83,7 @@ async function setup() {
   const packs = () => (existsSync(trace) ? readFileSync(trace, 'utf8') : '');
   const setBundle = (bundle: Bundle) => {
     const state = service.state();
-    state.npm['@fixture/provenance-core']['1.1.0'].bundle = bundle;
+    state.npm['@fixture/provenance-core']['1.0.0'].bundle = bundle;
     writeFileSync(join(service.root, 'registry.json'), JSON.stringify(state));
   };
   return { repo, service, signing, settings, packs, setBundle, manifest };
@@ -117,10 +117,9 @@ test('real semantic-release recovers an acknowledged hidden OIDC upload without 
     intent: true,
     acknowledged: true,
     published: false,
-    tagged: false,
   });
   const artifact = pending.execution.packages[0].artifact;
-  const published = service.state().npm['@fixture/provenance-core']['1.1.0'];
+  const published = service.state().npm['@fixture/provenance-core']['1.0.0'];
   const signingCalls = signing
     .events()
     .filter((path) => path.startsWith('/api/'));
@@ -137,7 +136,7 @@ test('real semantic-release recovers an acknowledged hidden OIDC upload without 
   expect(hidden.codes).toContain('EWORKSPACEPUBLISH');
   expect(repo.state().execution.packages[0].artifact).toEqual(artifact);
   expect(service.state().uploads).toEqual([
-    'npm:@fixture/provenance-core@1.1.0',
+    'npm:@fixture/provenance-core@1.0.0',
   ]);
   expect(
     service
@@ -155,7 +154,7 @@ test('real semantic-release recovers an acknowledged hidden OIDC upload without 
   expect(recovered.ok, recovered.logs).toBe(true);
   expect(repo.state().status).toBe('complete');
   expect(repo.state().execution.packages[0].artifact).toEqual(artifact);
-  expect(service.state().npm['@fixture/provenance-core']['1.1.0']).toEqual(
+  expect(service.state().npm['@fixture/provenance-core']['1.0.0']).toEqual(
     published,
   );
   expect(
@@ -168,7 +167,7 @@ test('real semantic-release recovers an acknowledged hidden OIDC upload without 
     signingCalls,
   );
   expect(packs()).toBe('pack\n');
-  expect(repo.tags()).toContain('npm/@fixture/provenance-core@1.1.0');
+  expect(repo.tags()).toContain('workspace-v1.0.0');
 });
 
 test('real semantic-release recovers an accepted npm OIDC upload with registry ProtoJSON defaults without repacking or resigning', async () => {
@@ -188,7 +187,7 @@ test('real semantic-release recovers an accepted npm OIDC upload with registry P
   const pending = repo.state();
   expect(pending.status).toBe('pending');
   const artifact = pending.execution.packages[0].artifact;
-  const published = service.state().npm['@fixture/provenance-core']['1.1.0'];
+  const published = service.state().npm['@fixture/provenance-core']['1.0.0'];
   const original: Bundle = published.bundle;
   const normalized = withRegistryDefaults(original);
   const verification = {
@@ -221,9 +220,9 @@ test('real semantic-release recovers an accepted npm OIDC upload with registry P
   expect(recovered.ok, recovered.logs).toBe(true);
   expect(repo.state().status).toBe('complete');
   expect(repo.state().execution.packages[0].artifact).toEqual(artifact);
-  expect(repo.tags()).toContain('npm/@fixture/provenance-core@1.1.0');
+  expect(repo.tags()).toContain('workspace-v1.0.0');
   expect(service.state().uploads).toEqual([
-    'npm:@fixture/provenance-core@1.1.0',
+    'npm:@fixture/provenance-core@1.0.0',
   ]);
   expect(
     service
@@ -236,10 +235,10 @@ test('real semantic-release recovers an accepted npm OIDC upload with registry P
   );
   expect(packs()).toBe('pack\n');
   expect(
-    service.state().npm['@fixture/provenance-core']['1.1.0'].artifact,
+    service.state().npm['@fixture/provenance-core']['1.0.0'].artifact,
   ).toBe(published.artifact);
   expect(
-    service.state().npm['@fixture/provenance-core']['1.1.0'].bundle,
+    service.state().npm['@fixture/provenance-core']['1.0.0'].bundle,
   ).toEqual(normalized);
   expect(
     JSON.parse(
@@ -271,7 +270,7 @@ test('real semantic-release rejects changed cryptographic proofs and nonempty re
   expect(repo.run(settings).ok).toBe(false);
   const artifact = repo.state().execution.packages[0].artifact;
   const original: Bundle =
-    service.state().npm['@fixture/provenance-core']['1.1.0'].bundle;
+    service.state().npm['@fixture/provenance-core']['1.0.0'].bundle;
   const signingCalls = signing
     .events()
     .filter((path) => path.startsWith('/api/'));
@@ -381,7 +380,7 @@ test('real semantic-release rejects changed cryptographic proofs and nonempty re
     );
     expect(repo.refs(), label).toBe(refs);
     expect(service.state().uploads, label).toEqual([
-      'npm:@fixture/provenance-core@1.1.0',
+      'npm:@fixture/provenance-core@1.0.0',
     ]);
     expect(
       service

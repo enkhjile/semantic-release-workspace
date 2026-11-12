@@ -64,57 +64,6 @@ export function npmVisibilityTimeout(config: Record<string, unknown>): number {
     );
   return timeout;
 }
-function tagName(id: string, version: string): string {
-  return `${id.replace(':', '/')}@${version}`;
-}
-async function tags(
-  context: VerifyConditionsContext,
-  state: Execution,
-  planning: PlanningState,
-  create = false,
-) {
-  for (const entry of state.packages) {
-    const pkg = planning.plan.packages.find((pkg) => pkg.id === entry.id);
-    if (!pkg?.nextVersion)
-      return releaseError(
-        'Publication state does not match its plan.',
-        'EWORKSPACEJOURNAL',
-      );
-    const tag = tagName(pkg.id, pkg.nextVersion);
-    await git(context, 'check-ref-format', `refs/tags/${tag}`);
-    const remote = await git(
-      context,
-      'ls-remote',
-      '--refs',
-      '--',
-      context.options.repositoryUrl ?? '',
-      `refs/tags/${tag}`,
-    );
-    const local = await git(context, 'tag', '--list', tag);
-    if (
-      (remote && remote.split(/\s/)[0] !== state.prepared) ||
-      (local &&
-        (await git(context, 'rev-parse', `refs/tags/${tag}^{commit}`)) !==
-          state.prepared)
-    )
-      return releaseError(
-        `Package tag already points elsewhere: ${tag}.`,
-        'EWORKSPACETAG',
-      );
-    if (!remote && entry.tagged) entry.tagged = false;
-    if (create && entry.published && !entry.tagged) {
-      if (!local) await git(context, 'tag', tag, state.prepared);
-      await git(
-        context,
-        'push',
-        '--',
-        context.options.repositoryUrl ?? '',
-        `refs/tags/${tag}:refs/tags/${tag}`,
-      );
-      entry.tagged = true;
-    }
-  }
-}
 export async function preflight(
   config: Record<string, unknown>,
   context: VerifyConditionsContext,
@@ -165,10 +114,29 @@ export async function preflight(
       ),
       intent: false,
       published: false,
-      tagged: false,
     });
   }
   for (const entry of result) {
+    const frozen =
+      planning.current.journal?.status === 'pending'
+        ? planning.current.journal.execution?.packages.find(
+            (pkg) => pkg.id === entry.id,
+          )
+        : undefined;
+    // The Cargo API is discovered separately; configuration must match before
+    // contacting any newly selected registry, including during a pending preview.
+    const selected =
+      entry.destination.ecosystem === 'cargo'
+        ? { ...entry.destination, api: frozen?.destination.api }
+        : entry.destination;
+    if (
+      frozen &&
+      JSON.stringify(selected) !== JSON.stringify(frozen.destination)
+    )
+      return releaseError(
+        'The pending publication destination changed. Restore its configuration before retrying.',
+        'EWORKSPACEPLAN',
+      );
     const retained =
       planning.current.journal?.status === 'pending' &&
       planning.current.journal.execution?.packages.find(
@@ -242,6 +210,70 @@ async function retainedArtifacts(
   }
   return retained;
 }
+async function validatePreparedCommit(
+  context: VerifyConditionsContext,
+  head: string,
+  prepared: string,
+): Promise<void> {
+  if (
+    (await fetchRef(
+      context,
+      refFor(head, undefined, releaseScope(context)),
+    )) !== prepared ||
+    (await git(context, 'rev-parse', `${prepared}^`)) !== head
+  )
+    return releaseError(
+      'Prepared release commit is missing or corrupt.',
+      'EWORKSPACEARTIFACT',
+    );
+}
+export async function validatePendingPublication(
+  context: VerifyConditionsContext,
+  planning: Planning,
+  execution = planning.current.journal?.execution,
+): Promise<void> {
+  if (!execution) return;
+  await validatePreparedCommit(context, planning.plan.head, execution.prepared);
+  for (const entry of execution.packages) {
+    if (
+      entry.destination.ecosystem === 'cargo' &&
+      (await completeCargoDestination(context, entry.destination)).api !==
+        entry.destination.api
+    )
+      return releaseError(
+        'The pending Cargo registry API changed.',
+        'EWORKSPACEPLAN',
+      );
+  }
+  const retained = await retainedArtifacts(context, planning, execution);
+  // A foreign version should be rejected before starting an irreversible batch.
+  for (const entry of execution.packages) {
+    const pkg = planning.plan.packages.find((pkg) => pkg.id === entry.id);
+    if (!pkg)
+      return releaseError(
+        'Publication package is missing from its plan.',
+        'EWORKSPACEJOURNAL',
+      );
+    const found = await probe(
+      context,
+      entry.destination,
+      pkg,
+      retained.get(entry.id)?.metadata,
+    );
+    const expected =
+      entry.destination.ecosystem === 'npm'
+        ? entry.artifact?.integrity
+        : entry.artifact?.sha256;
+    if (
+      (found !== null && (!entry.intent || found !== expected)) ||
+      (found === null && entry.published)
+    )
+      return releaseError(
+        `Registry version conflicts with this batch: ${pkg.id}@${pkg.nextVersion}.`,
+        'EWORKSPACECONFLICT',
+      );
+  }
+}
 export async function preparePublication(
   config: Record<string, unknown>,
   context: VerifyConditionsContext,
@@ -287,35 +319,7 @@ export async function preparePublication(
       );
     execution = previous;
   }
-  await tags(context, execution, planning);
-  const retained = await retainedArtifacts(context, planning, execution);
-  // A foreign version should be rejected before starting an irreversible batch.
-  for (const entry of execution.packages) {
-    const pkg = planning.plan.packages.find((pkg) => pkg.id === entry.id);
-    if (!pkg)
-      return releaseError(
-        'Publication package is missing from its plan.',
-        'EWORKSPACEJOURNAL',
-      );
-    const found = await probe(
-      context,
-      entry.destination,
-      pkg,
-      retained.get(entry.id)?.metadata,
-    );
-    const expected =
-      entry.destination.ecosystem === 'npm'
-        ? entry.artifact?.integrity
-        : entry.artifact?.sha256;
-    if (
-      (found !== null && (!entry.intent || found !== expected)) ||
-      (found === null && entry.published)
-    )
-      return releaseError(
-        `Registry version conflicts with this batch: ${pkg.id}@${pkg.nextVersion}.`,
-        'EWORKSPACECONFLICT',
-      );
-  }
+  await validatePendingPublication(context, planning, execution);
   await writeJournal(
     context,
     planning.current,
@@ -352,7 +356,6 @@ export async function publishPackages(
       planning,
       execution,
     );
-  await tags(context, execution, planning);
   const retained = await retainedArtifacts(context, planning, execution);
   const cargoIdentity = createCargoIdentity(context);
   try {
@@ -526,8 +529,6 @@ export async function publishPackages(
       }
       entry.published = true;
       await persist();
-      await tags(context, execution, planning, true);
-      await persist();
       context.logger.log('Published %s@%s.', pkg.id, pkg.nextVersion);
     }
   } finally {
@@ -545,17 +546,7 @@ export async function recoverManifests(
   if (current.journal?.status !== 'pending' || !current.journal.execution)
     return;
   const prepared = current.journal.execution.prepared;
-  if (
-    (await fetchRef(
-      context,
-      refFor(current.head, undefined, releaseScope(context)),
-    )) !== prepared ||
-    (await git(context, 'rev-parse', `${prepared}^`)) !== current.head
-  )
-    return releaseError(
-      'Prepared release commit is missing or corrupt.',
-      'EWORKSPACEARTIFACT',
-    );
+  await validatePreparedCommit(context, current.head, prepared);
   const paths = (
     await gitOutput(
       context,

@@ -3,79 +3,74 @@
 The [README](../README.md) describes supported behavior and configuration;
 [CONTRIBUTING](../CONTRIBUTING.md) covers development and verification commands.
 
-## Coordinator and package identities
+## One coordinator version
 
 The plugin runs inside the real semantic-release lifecycle. Core owns branch
-normalization, coordinator versions, batch tags and hook ordering. The plugin
-owns package analysis, dependency coordination, preparation and publication.
-One coordinator avoids independent release lifecycles whose partial completion
-would be difficult to reconcile across dependent packages.
+normalization, the shared version, workspace tags and hook ordering. The plugin
+owns workspace discovery, internal requirements, preparation and publication.
+One version eliminates separate package baselines, dependent bump propagation,
+and independent prerelease counters.
 
-A `workspace-v<version>` batch tag identifies a coordinator attempt at a source
-commit. Package versions are independent: `npm/<name>@<version>` and
-`cargo/<name>@<version>` tags identify the prepared release commit. A retry after
-core pushed a batch tag may allocate another coordinator version while retaining
-the same package versions, plan and artifacts. Completion history, rather than
-the latest batch tag, determines which source work remains unreleased.
+A `workspace-v<version>` tag identifies the source commit. Every public member
+receives that exact version, even when only one member changed. Private members
+remain unpublished. No new per-package Git tags are written; old package tags
+are read only for migration collision and downgrade checks.
 
 [The hooks](../src/index.ts) enforce that division:
-- Verification checks configuration, the repository root and clean source state,
-  recovering expected prepared files and channel metadata when necessary.
-- Analysis and release verification compute plans and check publication policy.
-- Preparation freezes release output and pushes a pending journal before tagging.
-- Publication performs dependency-first uploads and package tagging.
-- Success records completion; failure preserves pending state for another run.
+- Verification checks configuration, repository root, clean source state, and
+  durable pending work before core decides what to release.
+- Analysis applies Conventional Commit rules once to the repository commit
+  window; release verification assigns core's exact version to all public members.
+- Preparation freezes manifests, notes, destinations and artifacts.
+- Publication uploads in dependency order and records each registry confirmation.
+- Success records batch completion; failure preserves pending state.
 
-The single default release branch uses a patch coordinator counter. Multiple
-branches use the strongest package signal so core can enforce its ranges and
-prerelease counters. An empty inventory retains repository-wide commit analysis
-and batch tracking. A planning-only batch records proposed package history
-without claiming that anything reached a registry.
+Core clones hook contexts and cannot be told to reuse an already-created tag by
+mutating `nextRelease`. A tagged pending batch therefore recovers during
+`verifyConditions`, using its original frozen version and bytes. Core may then
+return `false` because no new release is needed. The plugin does not allocate a
+second version just to retry, and does not replay other plugins' publishing or
+reporting hooks. A pending dry-run validates and logs the frozen plan without
+completing it. Untagged pending work follows the normal hooks and must reproduce
+the exact frozen version.
 
-## Discovery and planning stay separate from publication
+## Discovery, attribution and dependencies
 
 [Discovery](../src/discovery.ts) parses JavaScript and Cargo workspace files
-without invoking package managers, installing dependencies or creating lockfiles.
-It produces a deterministic inventory with ecosystem-qualified identities and
-canonical paths. Duplicate names within an ecosystem and workspace directory
-symlinks are rejected so a package cannot acquire multiple identities or evade
-path exclusions. Private packages remain because they affect public dependents.
+without installing dependencies or creating lockfiles. Ecosystem-qualified
+identities and canonical paths prevent ambiguous package ownership. Duplicate
+names within an ecosystem and workspace directory symlinks are rejected.
 
-[Attribution](../src/attribution.ts) assigns commits by changed paths, not scopes.
-The deepest package owns a path; ecosystems sharing that directory both own it.
-Renames include both paths, merges use the first parent, and configured shared
-paths can affect every package. Each package retains its own unreleased history,
-even when another package completes a batch in the meantime.
+[Attribution](../src/attribution.ts) assigns commits to release notes by changed
+paths, not scopes. The deepest package owns a path; ecosystems sharing a
+directory both own it. Renames include both paths, merges use the first parent,
+and configured shared paths can appear in every member's notes. Attribution no
+longer decides whether a package is released.
 
-[Planning](../src/planning.ts) selects eligible completed ancestor versions and
-reachable package tags before falling back to declared manifest versions.
-[Dependency coordination](../src/dependencies.ts) orders releases by local
-dependencies. By default it does not select an unchanged dependent for release;
-requirements can still be updated when both packages are already selected.
-Temporary Cargo staging edits can keep the prepared workspace resolvable when
-the dependency is in the current batch, without becoming published dependency
-projections. With `synchronizeDependents: true`, it increases release
-types to a fixed point, calculating versions from the original package baseline.
-Runtime/build/optional incompatibility requires at least a patch; npm peer
-incompatibility requires a major; dev-only updates do not force a release.
-Strongly connected components provide deterministic dependency-first groups
-without repeated increments inside cycles. npm cycles can be published; Cargo
-cycles are rejected before publication. Private packages participate in plans
-and prepared edits, but receive no registry uploads or package tags.
+[Planning](../src/planning.ts) uses one shared version. Repository-wide signals
+include root-only and empty Conventional Commits. No release signal means no
+publication. Empty workspaces retain core lifecycle tracking.
 
-Completed plans retain projected dependency ranges because canonical source
-manifests are restored after release. A projection applies only while its
-original field value and dependency identity match; source edits take precedence.
-Carrier selection includes unchanged packages and legacy journals, filtering
-prerelease carriers so their ranges cannot leak into stable plans. Pending
-retries must reproduce the exact frozen plan.
+[Dependency coordination](../src/dependencies.ts) rewrites incompatible internal
+requirements against assigned shared versions. It keeps native npm aliases and
+workspace protocols, Cargo inherited/path/build dependencies, external range
+boundaries, and private Cargo staging. Declared source versions still help
+identify ordinary npm internal dependencies because source manifests are restored
+after every release. There is no fixed-point bump loop or carried dependency
+projection. Strongly connected components provide deterministic dependency-first
+groups; npm cycles are supported and Cargo publication cycles are rejected.
+
+Shared plans carry a versioning marker. Completed legacy journals remain readable
+for migration safeguards and historical artifacts. Pending independent-version
+batches must finish with the old plugin; the new planner refuses to reinterpret
+them. Missing journals and conflicting historical allocations remain errors.
 
 ## Source, prepared commits and artifacts have different roles
 
 [Manifest editing](../src/manifests.ts) and [release IO](../src/release-io.ts)
 construct a detached prepared commit containing released versions, dependency
-edits and optional changelogs. Package tags point there while the source branch
-stays at its original commit. This preserves development history while making
+edits and optional changelogs. Retained prepared refs point there while the source
+branch stays at its original commit. This preserves development history while making
 the released manifest state available through Git.
 
 Canonical prepared manifests preserve workspace protocols and materialize
@@ -120,8 +115,9 @@ proof, and a lost response is not proof of failure.
 
 An existing version is recoverable only when its bytes match the retained
 artifact and this batch recorded intent. Foreign versions fail even if their
-bytes match. Publication and tag progress are persisted separately, so a failed
-tag push can resume without uploading again. Delayed registry visibility leaves
+bytes match. Per-package publication progress is retained even though version
+allocation is shared, so partial uploads can resume without repeating confirmed
+registry writes. Delayed registry visibility leaves
 pending work at the same source commit. Published versions are irreversible;
 recovery finishes remaining steps instead of attempting a registry rollback.
 
@@ -129,7 +125,7 @@ A fresh clone fetches journals and retained refs to reconstruct this state.
 Changed plans, destinations, authentication policies, prepared commits or artifact
 proofs block recovery. Missing/malformed journals and conflicting tags also stop
 the run; deleting state does not restart a completed release. Completion follows
-publication, package tags and cleanup. A later reporting-hook failure can fail
+publication and cleanup. A later reporting-hook failure can fail
 the command after this plugin has already recorded completion.
 
 All release jobs for a repository must be serialized, including different
@@ -210,20 +206,18 @@ remain significant. The retained original bundle stays unchanged.
 
 ## Channels and release output are part of the frozen plan
 
-[Branch policy](../src/branches.ts) enforces package maintenance boundaries and
-cross-branch allocations independently of coordinator versions. Pending stable
-batches reserve coordinator allocation across stable branches; prerelease
-identifiers keep separate histories and counters. npm channels become dist-tags,
-while Cargo records membership through SemVer and Git history.
+[Branch policy](../src/branches.ts) follows semantic-release's shared maintenance
+ranges and prerelease counters. Pending stable batches reserve their allocation
+across stable branches. npm channels become dist-tags; Cargo records membership
+through SemVer and Git history.
 
-[Promotion](../src/channels.ts) verifies every original artifact and registry
-proof before moving any npm channel. It includes versions unchanged in the latest
-batch and preserves newer published ancestor versions on the destination branch.
-Selected package versions are frozen in the promotion intent for retries, and
-planning-only records cannot satisfy publication proof. Cargo versions are reused
-without uploading. Intent is persisted before
-core records its channel, allowing startup recovery even when core no longer
-calls `addChannel`. Promotion does not pack, upload or sign again.
+[Promotion](../src/channels.ts) selects one completed shared batch and verifies
+all its original artifacts and registry proofs before moving any npm channel.
+It does not combine independently selected package versions. The selection is
+frozen for retries, and planning-only records cannot satisfy publication proof.
+Cargo versions are reused without uploading. Intent is persisted before core
+records its channel, allowing startup recovery even when core no longer calls
+`addChannel`. Promotion does not pack, upload or sign again.
 
 [Release notes](../src/release-notes.ts) use attributed commits and source dates;
 [optional changelogs](../src/changelogs.ts) retain exact before/after bytes in the

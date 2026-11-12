@@ -115,6 +115,11 @@ function parseJournal(raw: string): Journal {
           result.planning?.plan.baseHead !== result.baseHead)
       )
         throw new Error('Mismatched plan');
+      if (
+        result.planning?.plan.versioning === 'shared' &&
+        result.planning.plan.version !== result.batchTag.slice(11)
+      )
+        throw new Error('Shared version differs from coordinator tag');
       if (result.status === 'complete' && result.planning) {
         for (const pkg of result.planning.plan.packages) {
           const completed = result.planning.versions.find(
@@ -141,7 +146,11 @@ function parseJournal(raw: string): Journal {
               result.execution.packages.map((pkg) => pkg.id).sort(),
             ) ||
           (result.status === 'complete' &&
-            result.execution.packages.some((pkg) => !pkg.tagged))
+            result.execution.packages.some((pkg) =>
+              result.planning?.plan.versioning === 'shared'
+                ? !pkg.published
+                : !pkg.tagged,
+            ))
         )
           throw new Error('Incomplete execution');
       }
@@ -297,6 +306,14 @@ export async function snapshot(
       'EWORKSPACECONFIG',
     );
   }
+  if (
+    journal.status === 'pending' &&
+    journal.planning?.plan.versioning !== 'shared'
+  )
+    throw new SemanticReleaseError(
+      'Finish the pending independent-version batch with the previous plugin before migrating to shared versions.',
+      'EWORKSPACEMIGRATION',
+    );
   if (journal.status === 'pending' && journal.head !== head) {
     throw new SemanticReleaseError(
       `Workspace batch at ${journal.head} is unfinished.`,
@@ -387,7 +404,7 @@ export async function writeJournal(
     branch: context.branch.name,
     status,
     head: current.head,
-    baseHead: baseline(current),
+    baseHead: planning ? planning.plan.baseHead : baseline(current),
     batchTag,
   };
   if (execution) journal.execution = execution;

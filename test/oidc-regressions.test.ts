@@ -115,10 +115,10 @@ test.each([['npm:127.0.0.1'], [['other', 'npm:127.0.0.1']]])(
     const result = repo.run(settings);
     expect(result.ok, result.logs).toBe(true);
     expect(exchangeRequests(service)).toHaveLength(1);
-    expect(service.state().uploads).toEqual(['npm:identity-fixture@1.1.0']);
+    expect(service.state().uploads).toEqual(['npm:identity-fixture@1.0.0']);
     expect(
-      service.state().npm['identity-fixture']['1.1.0'].metadata.version,
-    ).toBe('1.1.0');
+      service.state().npm['identity-fixture']['1.0.0'].metadata.version,
+    ).toBe('1.0.0');
   },
 );
 
@@ -264,7 +264,7 @@ test.each([['sigstore'], [['other', 'sigstore']]])(
       },
     });
     expect(result.ok, result.logs).toBe(true);
-    expect(service.state().uploads).toEqual(['npm:identity-fixture@1.1.0']);
+    expect(service.state().uploads).toEqual(['npm:identity-fixture@1.0.0']);
     expect(signing.events()).toContain('/api/v2/signingCert');
     expect(signing.events()).toContain('/api/v1/log/entries');
   },
@@ -299,7 +299,7 @@ test.each([
     ).toEqual([]);
     expect(JSON.stringify(result)).not.toContain('secret');
     expect(JSON.stringify(repo.state())).not.toContain('secret');
-    expect(repo.tags()).not.toContain('npm/identity-fixture@1.1.0');
+    expect(repo.state().execution.packages[0].published).toBe(false);
   },
 );
 
@@ -310,9 +310,9 @@ test('numeric Unix-second npm exchange timestamps allow native pack/upload and a
   expect(result.ok, result.logs).toBe(true);
   expect(identityRequests(service)).toHaveLength(1);
   expect(exchangeRequests(service)).toHaveLength(1);
-  expect(service.state().uploads).toEqual(['npm:identity-fixture@1.1.0']);
+  expect(service.state().uploads).toEqual(['npm:identity-fixture@1.0.0']);
   const bytes = Buffer.from(
-    service.state().npm['identity-fixture']['1.1.0'].artifact,
+    service.state().npm['identity-fixture']['1.0.0'].artifact,
     'base64',
   );
   const manifest = JSON.parse(
@@ -322,7 +322,7 @@ test('numeric Unix-second npm exchange timestamps allow native pack/upload and a
     }),
   );
   expect(manifest.name).toBe('identity-fixture');
-  expect(manifest.version).toBe('1.1.0');
+  expect(manifest.version).toBe('1.0.0');
   expect(
     execFileSync('tar', ['-xzOf', '-', 'package/index.js'], {
       input: bytes,
@@ -391,7 +391,7 @@ test('numeric npm exchanges renew only remaining packages during a fresh-clone p
   service.control('reject-second');
   const first = repo.run(settings);
   expect(first.ok).toBe(false);
-  expect(service.state().uploads).toEqual(['npm:identity-one@1.1.0']);
+  expect(service.state().uploads).toEqual(['npm:identity-one@1.0.0']);
   expect(exchangeRequests(service)).toHaveLength(2);
   const retained = repo
     .state()
@@ -400,8 +400,8 @@ test('numeric npm exchanges renew only remaining packages during a fresh-clone p
   const recovered = repo.run(settings, repo.clone());
   expect(recovered.ok, recovered.logs).toBe(true);
   expect(service.state().uploads).toEqual([
-    'npm:identity-one@1.1.0',
-    'npm:identity-two@1.1.0',
+    'npm:identity-one@1.0.0',
+    'npm:identity-two@1.0.0',
   ]);
   expect(
     service.state().exchanges.map((entry: { name: string }) => entry.name),
@@ -421,12 +421,12 @@ test('numeric exchange accepted uploads reconcile from a fresh clone without new
   service.trusted({ numericDates: true });
   service.control('once-drop-unreadable');
   expect(repo.run(settings).ok).toBe(false);
-  expect(service.state().uploads).toEqual(['npm:identity-fixture@1.1.0']);
+  expect(service.state().uploads).toEqual(['npm:identity-fixture@1.0.0']);
   const artifact = repo.state().execution.packages[0].artifact;
   service.control('');
   const recovered = repo.run({ ...settings, env: service.env }, repo.clone());
   expect(recovered.ok, recovered.logs).toBe(true);
-  expect(service.state().uploads).toEqual(['npm:identity-fixture@1.1.0']);
+  expect(service.state().uploads).toEqual(['npm:identity-fixture@1.0.0']);
   expect(exchangeRequests(service)).toHaveLength(1);
   expect(identityRequests(service)).toHaveLength(1);
   expect(repo.state().execution.packages[0].artifact).toEqual(artifact);

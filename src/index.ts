@@ -11,18 +11,15 @@ import type {
   VerifyConditionsContext,
   VerifyReleaseContext,
 } from 'semantic-release';
-import {
-  assertPendingBranches,
-  branchType,
-  coordinatorType,
-  npmChannel,
-} from './branches.js';
+import { sharedPatterns } from './attribution.js';
+import { assertPendingBranches, branchType, npmChannel } from './branches.js';
 import { recordChannels, repairChannels } from './channel-notes.js';
 import { planPromotion, promotionSource, recoverChannels } from './channels.js';
 import { discoverWorkspaces } from './discovery.js';
 import {
   commitsSinceCompletion,
   git,
+  readCommits,
   snapshot,
   writeJournal,
 } from './journal.js';
@@ -34,6 +31,7 @@ import {
   publishing,
   publishPackages,
   recoverManifests,
+  validatePendingPublication,
 } from './publication.js';
 import {
   changelogEnabled,
@@ -59,14 +57,12 @@ export async function verifyConditions(
   }
   changelogEnabled(config);
   npmVisibilityTimeout(config);
-  if (
-    config.synchronizeDependents !== undefined &&
-    typeof config.synchronizeDependents !== 'boolean'
-  )
+  if (config.synchronizeDependents !== undefined)
     throw new SemanticReleaseError(
-      'synchronizeDependents must be a boolean.',
+      'synchronizeDependents was removed; all public workspace members now use one shared release version.',
       'EWORKSPACECONFIG',
     );
+  sharedPatterns(config.sharedFiles);
   npmChannel(context.branch.channel);
   if (
     branchType(context) === 'prerelease' &&
@@ -104,28 +100,77 @@ export async function verifyConditions(
   const current = await snapshot(context);
   await repairChannels(context, current);
   await recoverChannels(config, context);
+  if (current.journal?.status === 'pending') {
+    // Core clones hook contexts and already loaded tags. Resume an allocated
+    // version here, before its normal release decision can increment it again.
+    const planning = await createVersionPlan(config, context);
+    if (await git(context, 'tag', '--list', current.journal.batchTag)) {
+      const notes = await notesForRelease(
+        config,
+        context,
+        planning,
+        await preflight(config, context, planning),
+      );
+      context.logger.log(
+        'Resuming frozen workspace release %s.',
+        planning.plan.version,
+      );
+      if (context.options.dryRun) {
+        if (publishing(config) && planning.current.journal?.execution)
+          await validatePendingPublication(context, planning);
+        context.logger.log(
+          '%s',
+          formatReleaseNotes(context, planning, notes, publishing(config)),
+        );
+        return;
+      }
+      if (publishing(config) && planning.plan.packages.length) {
+        await preparePublication(
+          config,
+          context,
+          planning,
+          current.journal.batchTag,
+        );
+        const prepared = await createVersionPlan(config, context);
+        await publishPackages(
+          config,
+          context,
+          prepared,
+          current.journal.batchTag,
+        );
+      }
+      const completed = await createVersionPlan(config, context);
+      await recordChannels(context, completed.plan.head);
+      await writeJournal(
+        context,
+        completed.current,
+        'complete',
+        current.journal.batchTag,
+        completed,
+        completed.current.journal?.execution,
+      );
+      context.logger.log(
+        'Completed frozen workspace release %s without allocating another version.',
+        completed.plan.version,
+      );
+    }
+  }
 }
 
 export async function analyzeCommits(
   config: PluginConfig,
   context: AnalyzeCommitsContext,
 ): Promise<import('./plan-types.js').ReleaseType | undefined> {
-  const planning = await createVersionPlan(config, context);
-  if (planning.plan.packages.length)
-    return planning.current.journal?.status === 'pending' ||
-      planning.plan.packages.some((pkg) => pkg.type)
-      ? coordinatorType(context, planning.plan.packages)
-      : undefined;
-  const { current, commits } = await commitsSinceCompletion(context);
-  const release = await analyzeConventionalCommits(config, {
-    ...context,
-    commits,
-  });
-  if (current.journal?.status === 'pending' || release) {
+  const current = await snapshot(context);
+  if (current.journal?.status === 'pending') {
+    if (await git(context, 'tag', '--list', current.journal.batchTag))
+      return undefined;
     assertPendingBranches(context, current.reservations);
-    return 'patch';
+    return current.journal.planning?.plan.releaseType;
   }
-  return undefined;
+  const release = await analyzeConventionalCommits(config, context);
+  if (release) assertPendingBranches(context, current.reservations);
+  return release || undefined;
 }
 
 export async function verifyRelease(
@@ -133,12 +178,17 @@ export async function verifyRelease(
   context: VerifyReleaseContext,
 ): Promise<void> {
   const planning = await createVersionPlan(_config, context);
-  if (
-    context.nextRelease.type !==
-    coordinatorType(context, planning.plan.packages)
-  ) {
+  const expected = await analyzeConventionalCommits(_config, {
+    ...context,
+    commits: await readCommits(
+      context,
+      planning.plan.head,
+      planning.plan.baseHead,
+    ),
+  });
+  if (context.nextRelease.type !== expected) {
     throw new SemanticReleaseError(
-      'The workspace coordinator must own commit analysis.',
+      'The workspace plugin must own repository-wide commit analysis.',
       'EWORKSPACECONFIG',
     );
   }
@@ -205,9 +255,7 @@ export async function prepare(
     planning.current,
     'pending',
     context.nextRelease.gitTag,
-    planning.plan.packages.length || planning.current.journal?.planning
-      ? planning
-      : undefined,
+    planning,
   );
   await recordChannels(context, planning.plan.head);
 }
@@ -257,9 +305,7 @@ export async function success(
     planning.current,
     'complete',
     context.nextRelease.gitTag,
-    planning.plan.packages.length || planning.current.journal?.planning
-      ? planning
-      : undefined,
+    planning,
     planning.current.journal?.execution,
   );
 }
