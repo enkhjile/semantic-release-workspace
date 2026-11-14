@@ -589,3 +589,5 @@ project's own release process. The project uses the [MIT license](LICENSE).
 Code, tests, and documentation were developed with substantial AI coding
 assistance. AI-generated output may contain mistakes; review the configuration
 and validate behavior in your own release workflow.
+
+Temporary documentation-only CI filter verification.
