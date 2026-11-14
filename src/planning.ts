@@ -66,21 +66,10 @@ export async function createVersionPlan(
     (await git(context, 'rev-list', '--topo-order', current.head)).split('\n'),
   );
   const versions = new Map<string, PackageVersion>();
-  const knownVersions = new Map<string, Set<string>>();
-  const rememberVersion = (id: string, version: string) => {
-    const known = knownVersions.get(id) ?? new Set<string>();
-    known.add(version);
-    knownVersions.set(id, known);
-  };
-  const projections = new Map<
-    string,
-    import('./plan-types.js').DependencyUpdate
-  >();
   for (const entry of completed) {
     if (!ancestors.has(entry.head)) continue;
     for (const version of entry.planning?.versions ?? []) {
       if (!eligible(version.version)) continue;
-      rememberVersion(version.id, version.version);
       const previous = versions.get(version.id);
       if (!previous || gt(version.version, previous.version))
         versions.set(version.id, version);
@@ -90,59 +79,6 @@ export async function createVersionPlan(
     versions.clear();
     for (const version of current.journal.planning?.versions ?? [])
       versions.set(version.id, version);
-  }
-  const positions = new Map([...ancestors].map((head, index) => [head, index]));
-  const projectionHistory = completed
-    .filter(
-      (entry) =>
-        ancestors.has(entry.head) &&
-        (entry.planning?.plan.release?.type !== 'prerelease' ||
-          (branchType(context) === 'prerelease' &&
-            entry.planning.plan.release.prerelease ===
-              String(context.branch.prerelease))),
-    )
-    .sort(
-      (left, right) =>
-        (positions.get(left.head) ?? 0) - (positions.get(right.head) ?? 0),
-    );
-  for (const version of versions.values()) {
-    // Later batches carry projections for unchanged packages, including dev-only
-    // changes. Legacy journals may be the only record of those earlier releases.
-    const carrier = projectionHistory.find((entry) =>
-      entry.planning?.versions.some(
-        (candidate) =>
-          candidate.id === version.id &&
-          candidate.version === version.version &&
-          candidate.head === version.head,
-      ),
-    );
-    const previousPackage = carrier?.planning?.plan.packages.find(
-      (pkg) => pkg.id === version.id,
-    );
-    if (!previousPackage) continue;
-    const currentPackage = inventory.packages.find(
-      (pkg) => packageId(pkg) === version.id,
-    );
-    const file =
-      previousPackage.ecosystem === 'npm' ? 'package.json' : 'Cargo.toml';
-    const previousManifest = `${previousPackage.path === '.' ? '' : `${previousPackage.path}/`}${file}`;
-    for (const update of previousPackage.dependencyUpdates) {
-      // Only package-owned fields follow a move. Shared Cargo workspace
-      // dependencies remain in the root manifest, even for a former root crate.
-      const projection =
-        currentPackage &&
-        update.manifestPath === previousManifest &&
-        update.field[0] !== 'workspace'
-          ? {
-              ...update,
-              manifestPath: `${currentPackage.path === '.' ? '' : `${currentPackage.path}/`}${file}`,
-            }
-          : update;
-      projections.set(
-        JSON.stringify([projection.manifestPath, projection.field]),
-        projection,
-      );
-    }
   }
   const packages: PackagePlan[] = [];
   const baselines: {
@@ -162,7 +98,6 @@ export async function createVersionPlan(
       if (!tag.startsWith(prefix)) continue;
       const candidate = tag.slice(prefix.length);
       if (valid(candidate) !== candidate || !eligible(candidate)) continue;
-      rememberVersion(id, candidate);
       if (taggedVersion === undefined || gt(candidate, taggedVersion)) {
         taggedVersion = candidate;
         tagHead = await git(context, 'rev-parse', `refs/tags/${tag}^{commit}`);
@@ -216,18 +151,7 @@ export async function createVersionPlan(
     current.journal?.status === 'pending' &&
     current.journal.planning !== undefined &&
     current.journal.planning.plan.dependencyPolicy === undefined;
-  const coordinated = coordinateDependencies(
-    inventory,
-    packages,
-    workspace,
-    current.journal?.status === 'pending'
-      ? current.journal.planning?.dependencyRanges
-      : [...projections.values()],
-    (version, type) => nextPackageVersion(context, version, type),
-    config.synchronizeDependents === true,
-    config.synchronizeDependents === true && !legacyPending,
-    knownVersions,
-  );
+  const coordinated = coordinateDependencies(inventory, packages, workspace);
   checkPackageBranches(
     context,
     packages,
@@ -266,14 +190,8 @@ export async function createVersionPlan(
     groups: coordinated.groups,
     ...(!legacyPending
       ? {
-          dependencyPolicy:
-            config.synchronizeDependents === true
-              ? ('synchronize' as const)
-              : ('independent' as const),
+          dependencyPolicy: 'independent' as const,
         }
-      : {}),
-    ...(coordinated.stagingDependencies.length
-      ? { stagingDependencies: coordinated.stagingDependencies }
       : {}),
   };
   if (
@@ -293,7 +211,7 @@ export async function createVersionPlan(
       : {}),
     plan,
     versions: [...versions.values()],
-    dependencyRanges: coordinated.dependencyRanges,
+    dependencyRanges: [],
   };
 }
 export function planNotes(plan: ReleasePlan, publish = false): string {

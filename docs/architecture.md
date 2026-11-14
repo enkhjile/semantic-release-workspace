@@ -7,7 +7,7 @@ The [README](../README.md) describes supported behavior and configuration;
 
 The plugin runs inside the real semantic-release lifecycle. Core owns branch
 normalization, coordinator versions, batch tags and hook ordering. The plugin
-owns package analysis, dependency coordination, preparation and publication.
+owns package analysis, dependency ordering, preparation and publication.
 One coordinator avoids independent release lifecycles whose partial completion
 would be difficult to reconcile across dependent packages.
 
@@ -49,26 +49,20 @@ even when another package completes a batch in the meantime.
 
 [Planning](../src/planning.ts) selects eligible completed ancestor versions and
 reachable package tags before falling back to declared manifest versions.
-[Dependency coordination](../src/dependencies.ts) orders releases by local
-dependencies. By default it does not select an unchanged dependent for release;
-requirements can still be updated when both packages are already selected.
-Temporary Cargo staging edits can keep the prepared workspace resolvable when
-the dependency is in the current batch, without becoming published dependency
-projections. With `synchronizeDependents: true`, it increases release
-types to a fixed point, calculating versions from the original package baseline.
-Runtime/build/optional incompatibility requires at least a patch; npm peer
-incompatibility requires a major; dev-only updates do not force a release.
-Strongly connected components provide deterministic dependency-first groups
-without repeated increments inside cycles. npm cycles can be published; Cargo
-cycles are rejected before publication. Private packages participate in plans
-and prepared edits, but receive no registry uploads or package tags.
+[Dependency ordering](../src/dependencies.ts) orders selected releases without
+selecting dependents or increasing their release types. Explicit npm and Cargo
+requirements remain as committed, even when both packages release together.
+Only local reference conversion needed by native packaging derives a requirement
+from a workspace package version. Strongly connected components provide stable
+dependency-first groups; npm cycles can be published and Cargo cycles are rejected.
+Private packages participate in plans but receive no uploads or package tags.
 
-Completed plans retain projected dependency ranges because canonical source
-manifests are restored after release. A projection applies only while its
-original field value and dependency identity match; source edits take precedence.
-Carrier selection includes unchanged packages and legacy journals, filtering
-prerelease carriers so their ranges cannot leak into stable plans. Pending
-retries must reproduce the exact frozen plan.
+This boundary keeps dependency adoption under the maintainer's control. An app
+can keep consuming an older registry version while core releases independently.
+An app manifest upgrade needs its own attributed release commit. Historical
+automatic dependency projections do not override explicit requirements in new
+plans. Frozen pending plans must still match exactly; incompatible old batches
+must be completed with the version that created them before migration.
 
 ## Source, prepared commits and artifacts have different roles
 
@@ -225,16 +219,23 @@ without uploading. Intent is persisted before
 core records its channel, allowing startup recovery even when core no longer
 calls `addChannel`. Promotion does not pack, upload or sign again.
 
-[Release notes](../src/release-notes.ts) use attributed commits and source dates;
-[optional changelogs](../src/changelogs.ts) retain exact before/after bytes in the
-journal and prepared commit. Packages sharing a directory share a changelog.
-Eligible released history is carried forward, with source edits taking precedence
-and stable/prerelease histories distinct. Package moves follow identity to prior
-changelog paths for snapshot verification and write the accumulated history at
-the new path. Co-located histories retain a verified common suffix only once.
-Pending retries reuse exact notes and
-reject a changed changelog policy. Promotions reuse historical notes without
-adding changelog entries.
+[Release notes](../src/release-notes.ts) use attributed commits and source dates.
+[The optional root changelog](../src/changelogs.ts) groups released public packages
+by identity/version and freezes exact before/after bytes in the journal and
+prepared commit. Retained root history survives batches that change different
+members and package moves; explicit source edits take precedence. Stable and
+prerelease histories remain distinct. Existing member changelogs are not rewritten
+or automatically merged: maintainers can consolidate them into the source root
+file. Pending retries reuse frozen bytes and reject a changed changelog policy.
+Promotions reuse historical notes without adding changelog entries.
+
+The optional official GitHub plugin consumes those aggregate notes through the
+standard lifecycle and publishes one release on the coordinator tag. It owns its
+GitHub API operations. A failed GitHub publish leaves the workspace batch pending;
+a fresh-clone retry reuses frozen package versions and skips accepted uploads,
+while core can allocate another coordinator tag for the aggregate GitHub release.
+Package identity remains stable even if the coordinator attempt changes. This
+avoids a second release coordinator or an adapter for arbitrary plugins.
 
 ## Verify protocols through real local lifecycles
 

@@ -21,7 +21,7 @@ test.each(
 )(
   'publishes $protocol aliases with the target identity (target changed: $changed)',
   async ({ protocol, changed }) => {
-    const repo = fixture({ synchronizeDependents: true });
+    const repo = fixture();
     const service = await registry();
     const file = (path: string, value: string) => {
       mkdirSync(join(repo.cwd, path, '..'), { recursive: true });
@@ -62,6 +62,11 @@ test.each(
     );
     repo.git(repo.cwd, 'add', '.');
     repo.commit(changed ? 'feat: enhance library' : 'fix: repair application');
+    if (changed) {
+      file('packages/app/index.js', 'export const value = 2;');
+      repo.git(repo.cwd, 'add', '.');
+      repo.commit('fix: adopt the local library update');
+    }
     const settings = {
       env: service.env,
       pluginConfig: { publish: true, npm: { registry: service.url } },
@@ -90,7 +95,7 @@ test.each(
     }
     const result = repo.run(settings);
     expect(result.ok, result.logs).toBe(true);
-    const version = changed ? '2.0.0' : '1.0.1';
+    const version = '1.0.1';
     const artifact = Buffer.from(
       service.state().npm['alias-app'][version].artifact,
       'base64',

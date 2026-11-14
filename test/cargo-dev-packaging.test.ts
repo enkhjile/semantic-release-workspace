@@ -35,7 +35,7 @@ test.each([
     const omittedFeatures = mode === 'features' || mode === 'legacy-features';
     const dependency = inherited
       ? 'helper.workspace = true\n'
-      : `helper = { package = "dev-helper", path = "../helper"${mode === 'versioned' ? ', version = "=1.0.0"' : ''} }\n`;
+      : `helper = { package = "dev-helper", path = "../helper"${mode === 'versioned' ? ', version = "=1.1.0"' : ''} }\n`;
     const files: Record<string, string> = {
       '.gitignore': 'target/\nCargo.lock\n',
       '.cargo/config.toml': `[registries.fixture]\nindex = "sparse+${service.url}/cargo/index/"\n`,

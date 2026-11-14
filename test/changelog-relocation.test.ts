@@ -8,7 +8,6 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
-import { archiveFile } from '../src/archive.js';
 import { registry, servers } from './fixtures/registry.js';
 import { fixture, roots } from './fixtures/repository.js';
 
@@ -78,39 +77,34 @@ test.each([
     const first = repo.run(settings);
     expect(first.ok, first.logs).toBe(true);
     expect(
-      repo.git(
-        repo.remote,
-        'show',
-        `${ecosystem}/app@1.1.0:${previousPath}/CHANGELOG.md`,
-      ),
+      repo.git(repo.remote, 'show', `${ecosystem}/app@1.1.0:CHANGELOG.md`),
     ).toContain('introduce original behavior');
 
     mkdirSync(join(repo.cwd, 'apps'));
     renameSync(join(repo.cwd, previousPath), join(repo.cwd, 'apps/app'));
     configure('apps/app');
     const source = '# Changelog\n\nReplacement history at the new location.\n';
-    if (override) file('apps/app/CHANGELOG.md', source);
+    if (override) file('CHANGELOG.md', source);
     commit('fix: relocate application');
     const clone = repo.clone();
     const before = readFileSync(join(clone, 'apps/app', manifest), 'utf8');
     const second = repo.run(settings, clone);
     expect(second.ok, second.logs).toBe(true);
-    const text = await archiveFile(
-      Buffer.from(service.state()[ecosystem].app['1.1.1'].artifact, 'base64'),
-      `${ecosystem === 'npm' ? 'package' : 'app-1.1.1'}/CHANGELOG.md`,
+    const text = repo.git(
+      repo.remote,
+      'show',
+      `${ecosystem}/app@1.1.1:CHANGELOG.md`,
     );
     expect(text).toContain(`${ecosystem}:app@1.1.1`);
     expect(text).toContain('relocate application');
     if (override) {
       expect(text).toContain('Replacement history at the new location.');
       expect(text).not.toContain(`${ecosystem}:app@1.1.0`);
-      expect(readFileSync(join(clone, 'apps/app/CHANGELOG.md'), 'utf8')).toBe(
-        source,
-      );
+      expect(readFileSync(join(clone, 'CHANGELOG.md'), 'utf8')).toBe(source);
     } else {
       expect(text).toContain(`${ecosystem}:app@1.1.0`);
       expect(text).toContain('introduce original behavior');
-      expect(existsSync(join(clone, 'apps/app/CHANGELOG.md'))).toBe(false);
+      expect(existsSync(join(clone, 'CHANGELOG.md'))).toBe(false);
     }
     expect(readFileSync(join(clone, 'apps/app', manifest), 'utf8')).toBe(
       before,
@@ -171,9 +165,10 @@ test('co-locating, splitting and reuniting packages preserves each changelog ent
   const second = repo.run(settings, clone);
   expect(second.ok, second.logs).toBe(true);
   for (const ecosystem of ['npm', 'cargo']) {
-    const text = await archiveFile(
-      Buffer.from(service.state()[ecosystem].app['1.1.1'].artifact, 'base64'),
-      `${ecosystem === 'npm' ? 'package' : 'app-1.1.1'}/CHANGELOG.md`,
+    const text = repo.git(
+      repo.remote,
+      'show',
+      `${ecosystem}/app@1.1.1:CHANGELOG.md`,
     );
     for (const id of ['npm:app', 'cargo:app'])
       for (const version of ['1.1.0', '1.1.1'])
@@ -222,9 +217,10 @@ test('co-locating, splitting and reuniting packages preserves each changelog ent
   result = repo.run(settings, reunited);
   expect(result.ok, result.logs).toBe(true);
   for (const ecosystem of ['npm', 'cargo']) {
-    const text = await archiveFile(
-      Buffer.from(service.state()[ecosystem].app['1.1.4'].artifact, 'base64'),
-      `${ecosystem === 'npm' ? 'package' : 'app-1.1.4'}/CHANGELOG.md`,
+    const text = repo.git(
+      repo.remote,
+      'show',
+      `${ecosystem}/app@1.1.4:CHANGELOG.md`,
     );
     for (const id of ['npm:app', 'cargo:app'])
       for (const version of ['1.1.0', '1.1.1', '1.1.2', '1.1.3', '1.1.4'])

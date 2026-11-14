@@ -1,6 +1,5 @@
-import { join } from 'node:path';
 import type { VerifyConditionsContext } from 'semantic-release';
-import { gt, lte, prerelease } from 'semver';
+import { lte, prerelease } from 'semver';
 import { git, type Journal, type Snapshot } from './journal.js';
 import { readReleaseFile } from './manifests.js';
 import type {
@@ -25,52 +24,44 @@ function changelogOrigins(
   planning: Planning,
   ancestors: Map<string, number>,
 ): { origins: ChangelogOrigin[]; history: ChangelogOrigin[] } {
-  const origins: ChangelogOrigin[] = [];
-  const history: ChangelogOrigin[] = [];
-  for (const pkg of planning.plan.packages.filter(
-    (entry) => join(entry.path, 'CHANGELOG.md') === path,
-  )) {
-    const current = pkg.currentVersion;
-    if (!current) continue;
-    let selected: ChangelogOrigin | undefined;
-    let selectedVersion: string | undefined;
-    for (const entry of planning.current.history) {
-      const previousPackage = entry.planning?.plan.packages.find(
-        (old) => old.id === pkg.id,
-      );
-      const change = previousPackage
-        ? entry.planning?.releaseNotes?.changelogs.find(
-            (change) =>
-              change.path === join(previousPackage.path, 'CHANGELOG.md'),
-          )
-        : undefined;
-      if (!entry.execution || !ancestors.has(entry.head) || !change) continue;
-      const version = previousPackage?.nextVersion;
-      if (!version || !lte(version, current)) continue;
-      const pre = prerelease(version);
+  // Root history survives package moves and releases of other members. Legacy
+  // member changelogs remain untouched; users can curate them into the root file.
+  const origins = planning.current.history
+    .flatMap((journal) => {
+      const previousPrerelease = journal.planning?.plan.release?.prerelease;
       if (
-        pre &&
-        (!prerelease(current) ||
-          pre.slice(0, -1).join('.') !==
-            prerelease(current)?.slice(0, -1).join('.'))
+        previousPrerelease &&
+        previousPrerelease !== planning.plan.release?.prerelease
       )
-        continue;
-      history.push({ journal: entry, change });
-      if (!selectedVersion || gt(version, selectedVersion)) {
-        selected = { journal: entry, change };
-        selectedVersion = version;
-      }
-    }
-    if (selected) origins.push(selected);
-  }
-  const unique = new Map<string, ChangelogOrigin>();
-  for (const origin of origins.sort(
-    (a, b) =>
-      (ancestors.get(a.journal.head) ?? 0) -
-      (ancestors.get(b.journal.head) ?? 0),
-  ))
-    if (!unique.has(origin.change.path)) unique.set(origin.change.path, origin);
-  return { origins: [...unique.values()], history };
+        return [];
+      const change = journal.planning?.releaseNotes?.changelogs.find(
+        (entry) => entry.path === path,
+      );
+      if (!journal.execution || !ancestors.has(journal.head) || !change)
+        return [];
+      const eligible = journal.planning?.plan.packages.every((old) => {
+        if (!old.nextVersion || old.private) return true;
+        const current = planning.plan.packages.find(
+          (pkg) => pkg.id === old.id,
+        )?.currentVersion;
+        // Removed members still belong in repository history.
+        if (!current) return true;
+        const pre = prerelease(old.nextVersion);
+        return (
+          lte(old.nextVersion, current) &&
+          (!pre ||
+            pre.slice(0, -1).join('.') ===
+              prerelease(current)?.slice(0, -1).join('.'))
+        );
+      });
+      return eligible ? [{ journal, change }] : [];
+    })
+    .sort(
+      (a, b) =>
+        (ancestors.get(a.journal.head) ?? 0) -
+        (ancestors.get(b.journal.head) ?? 0),
+    );
+  return { origins, history: origins };
 }
 
 async function verifyChangelog(
@@ -102,68 +93,76 @@ export async function changelogChanges(
   notes: ReleaseNotes,
 ): Promise<ChangelogChange[]> {
   if (!notes.changelog) return [];
-  const paths = new Map<string, ReleaseNotes['packages']>();
-  for (const pkg of notes.packages) {
-    const planned = planning.plan.packages.find((entry) => entry.id === pkg.id);
-    if (!planned) continue;
-    const path = join(planned.path, 'CHANGELOG.md');
-    paths.set(path, [...(paths.get(path) ?? []), pkg]);
-  }
+  const packages = notes.packages.filter((pkg) =>
+    planning.plan.packages.some(
+      (entry) => entry.id === pkg.id && !entry.private,
+    ),
+  );
+  if (!packages.length) return [];
+  const path = 'CHANGELOG.md';
   const ancestors = new Map(
     (await git(context, 'rev-list', '--topo-order', planning.plan.head))
       .split('\n')
       .map((head, index) => [head, index]),
   );
-  const changes: ChangelogChange[] = [];
-  for (const [path, packages] of paths) {
-    const before = await readReleaseFile(context.cwd ?? process.cwd(), path);
-    if (before !== (await readGitFile(context, planning.plan.head, path)))
-      releaseError(
-        'Changelog differs from committed source history.',
-        'EWORKSPACEDIRTY',
-      );
-    let base = before ?? '';
-    const retained = new Set<string>();
-    const { origins, history } = changelogOrigins(path, planning, ancestors);
-    for (const origin of origins) {
-      if (before !== origin.change.before) continue;
-      await verifyChangelog(context, origin);
-      retained.add(origin.change.after);
+  const before = await readReleaseFile(context.cwd ?? process.cwd(), path);
+  if (before !== (await readGitFile(context, planning.plan.head, path)))
+    releaseError(
+      'Changelog differs from committed source history.',
+      'EWORKSPACEDIRTY',
+    );
+  let base = before ?? '';
+  const retained = new Set<string>();
+  const { origins, history } = changelogOrigins(path, planning, ancestors);
+  for (const origin of origins) {
+    if (before !== origin.change.before) continue;
+    const body = origin.change.after.replace(title, '');
+    if ([...retained].some((snapshot) => snapshot.endsWith(body))) continue;
+    await verifyChangelog(context, origin);
+    retained.add(origin.change.after);
+  }
+  const bodies = [...retained];
+  if (bodies[0]) base = bodies[0];
+  for (const snapshot of bodies.slice(1)) {
+    const body = snapshot.replace(title, '');
+    if (base.endsWith(body)) continue;
+    if (body.endsWith(base.replace(title, ''))) {
+      base = snapshot;
+      continue;
     }
-    const bodies = [...retained];
-    if (bodies[0]) base = bodies[0];
-    for (const snapshot of bodies.slice(1)) {
-      const body = snapshot.replace(title, '');
-      // Only complete archived histories identify shared suffixes; notes remain opaque.
-      const common = history
-        .map((origin) => ({
+    // Archived before/after snapshots prove shared suffixes; notes remain opaque.
+    const common = history
+      .flatMap((origin) =>
+        [
+          origin.change.after,
+          ...(origin.change.before === before && before ? [before] : []),
+        ].map((snapshot) => ({
           origin,
-          body: origin.change.after.replace(title, ''),
-        }))
-        .filter(
-          (entry) =>
-            entry.body &&
-            base.endsWith(entry.body) &&
-            body.endsWith(entry.body),
-        )
-        .sort((a, b) => b.body.length - a.body.length)[0];
-      if (common) {
-        await verifyChangelog(context, common.origin);
-        base = `${base.slice(0, -common.body.length)}${body.slice(0, -common.body.length)}${common.body}`;
-      } else base = `${base}\n\n${body}`;
-    }
-    const header = title.exec(base)?.[0];
-    const entries = packages
-      .map(
-        (pkg) =>
-          `## ${pkg.id}@${pkg.version} (${notes.date})\n\nChannel: \`${pkg.channel ?? 'default'}\`\n\n${pkg.notes}`,
+          body: snapshot.replace(title, ''),
+        })),
       )
-      .join('\n\n');
-    changes.push({
+      .filter(
+        (entry) =>
+          entry.body && base.endsWith(entry.body) && body.endsWith(entry.body),
+      )
+      .sort((a, b) => b.body.length - a.body.length)[0];
+    if (common) {
+      await verifyChangelog(context, common.origin);
+      base = `${base.slice(0, -common.body.length)}${body.slice(0, -common.body.length)}${common.body}`;
+    } else base = `${base}\n\n${body}`;
+  }
+  const header = title.exec(base)?.[0];
+  const entries = packages
+    .map(
+      (pkg) =>
+        `## ${pkg.id}@${pkg.version} (${notes.date})\n\nChannel: \`${pkg.channel ?? 'default'}\`\n\n${pkg.notes}`,
+    )
+    .join('\n\n');
+  return [
+    {
       path,
       before,
       after: `${header ?? '# Changelog\n\n'}${entries}\n\n${header ? base.slice(header.length) : base}`,
-    });
-  }
-  return changes;
+    },
+  ];
 }

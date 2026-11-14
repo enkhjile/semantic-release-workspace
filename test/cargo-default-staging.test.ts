@@ -97,6 +97,17 @@ async function setup(
   repo.git(repo.cwd, 'add', '.');
   repo.commit('feat: add default registry crates');
 
+  // The native preflight above uses the current local version. Select the
+  // planned published version explicitly before semantic-release packages it.
+  const adapterManifest = 'crates/adapter/Cargo.toml';
+  files[adapterManifest] = readFileSync(
+    join(repo.cwd, adapterManifest),
+    'utf8',
+  ).replace('version = "=1.0.0"', 'version = "=1.1.0"');
+  writeFileSync(join(repo.cwd, adapterManifest), files[adapterManifest]);
+  repo.git(repo.cwd, 'add', adapterManifest);
+  repo.commit('fix(adapter): adopt core 1.1.0');
+
   // Route built-in index HTTP transport locally without changing registry
   // selection; native Cargo uses its own source replacement.
   const transport = join(service.root, 'default-index-transport.mjs');

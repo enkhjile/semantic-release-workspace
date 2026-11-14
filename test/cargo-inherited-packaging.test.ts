@@ -60,6 +60,19 @@ async function setup(inherited = true, shared = false) {
   expect(native.status, `${native.stdout}\n${native.stderr}`).toBe(0);
   repo.git(repo.cwd, 'add', '.');
   repo.commit('feat: add inherited crates');
+
+  // Preserve the native check against the current local version, then commit
+  // the user's explicit upgrade for this release instead of relying on rewrites.
+  const dependencyManifest = shared
+    ? 'Cargo.toml'
+    : 'crates/adapter/Cargo.toml';
+  files[dependencyManifest] = readFileSync(
+    join(repo.cwd, dependencyManifest),
+    'utf8',
+  ).replace('version = "=1.0.0"', 'version = "=1.1.0"');
+  writeFileSync(join(repo.cwd, dependencyManifest), files[dependencyManifest]);
+  repo.git(repo.cwd, 'add', dependencyManifest);
+  repo.commit('fix(adapter): adopt core 1.1.0');
   const settings = {
     env: service.env,
     pluginConfig: {

@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 async function setup() {
-  const repo = fixture({ synchronizeDependents: true });
+  const repo = fixture();
   const service = await registry();
   const inherited =
     'version.workspace = true\nedition.workspace = true\nlicense.workspace = true\n';
@@ -91,6 +91,16 @@ async function setup() {
   );
   repo.git(repo.cwd, 'add', '.');
   repo.commit('feat(core): add a core capability');
+  files['Cargo.toml'] = readFileSync(
+    join(repo.cwd, 'Cargo.toml'),
+    'utf8',
+  ).replace('version = "=1.0.0"', 'version = "=1.1.0"');
+  files['crates/outer/inner/nested/src/lib.rs'] +=
+    '// Adopt the new core capability.\n';
+  for (const [file, contents] of Object.entries(files))
+    writeFileSync(join(repo.cwd, file), contents);
+  repo.git(repo.cwd, 'add', '.');
+  repo.commit('fix(adapter): adopt core 1.1.0');
   const settings = {
     env: service.env,
     pluginConfig: {
