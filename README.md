@@ -21,14 +21,14 @@ Requirements for a consumer repository:
 - One release job at a time for the **whole repository**, including different
   branches. A concurrency group containing the branch name is insufficient.
 
-Install a stable 1.x release in the consumer repository root:
+Install the current release candidate in the consumer repository root:
 
 ```sh
-npm install --save-dev 'semantic-release@^25.0.9' 'semantic-release-workspace@^1.0.0'
+npm install --save-dev 'semantic-release@^25.0.9' semantic-release-workspace@rc
 ```
 
-For prereleases, use `semantic-release-workspace@alpha` instead. The `alpha` tag
-may include changes that are not yet in a stable release. See the
+Release candidates use the `rc` tag. Stable releases will use npm's `latest` tag
+when available. See the
 [release history](https://github.com/enkhjile/semantic-release-workspace/releases)
 for published versions.
 
@@ -262,7 +262,7 @@ packages and their independent versions:
 
 ```js
 export default {
-  branches: ['main', { name: 'alpha', prerelease: true }],
+  branches: ['main', { name: 'rc', prerelease: true }],
   tagFormat: 'workspace-v${version}',
   plugins: [
     ['semantic-release-workspace', { changelog: true }],
@@ -282,7 +282,7 @@ export default {
 
 Install `@semantic-release/github` and provide `GITHUB_TOKEN` with repository
 contents write permission. The GitHub release uses the `workspace-v…` coordinator
-tag, not a package version; alpha batches are GitHub prereleases. Package tags
+tag, not a package version; RC batches are GitHub prereleases. Package tags
 still exist independently. Omit this plugin to skip GitHub releases entirely.
 `addReleases: false` only disables appended publishing-plugin links, not release
 creation or the grouped notes.
@@ -478,7 +478,7 @@ export default {
     '1.x',
     'main',
     'next',
-    { name: 'alpha', prerelease: true },
+    { name: 'rc', prerelease: true },
     { name: 'preview', prerelease: 'rc', channel: 'preview' },
   ],
   tagFormat: 'workspace-v${version}',
@@ -486,12 +486,12 @@ export default {
 };
 ```
 
-Prereleases have package-local counters such as `1.2.0-alpha.1` and
-`1.2.0-alpha.2`; stronger commit signals can advance the target stable version.
+Prereleases have package-local counters such as `1.2.0-rc.1` and
+`1.2.0-rc.2`; stronger commit signals can advance the target stable version.
 Stable branches exclude prerelease baselines, and merging prerelease work creates
 stable package versions. Explicit dependency requirements are preserved: upgrade
 prerelease pins to stable versions yourself before releasing the dependent on
-main. Promote alpha into main and backmerge main into alpha with merge commits
+main. Promote rc into main and backmerge main into rc with merge commits
 to preserve release ancestry. A backmerge with no unreleased package changes
 releases nothing; subsequent attributed commits start the next prerelease cycle.
 Different prerelease identifiers retain separate histories and artifacts.

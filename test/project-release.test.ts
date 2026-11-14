@@ -9,7 +9,7 @@ import { fixture } from './fixtures/repository.js';
 
 afterEach(cleanupFixtures);
 
-test('project releases use local npm for alpha OIDC publication instead of host npm', async () => {
+test('project releases transition from alpha history to rc using local npm and OIDC', async () => {
   const repo = fixture();
   const service = await registry();
   service.trusted();
@@ -26,6 +26,19 @@ test('project releases use local npm for alpha OIDC publication instead of host 
   repo.git(repo.cwd, 'checkout', '-b', 'alpha');
   repo.git(repo.cwd, 'add', '.');
   repo.commit('feat: release fixture');
+  repo.git(repo.cwd, 'tag', 'v1.0.0-alpha.11');
+  repo.git(
+    repo.cwd,
+    'notes',
+    '--ref=semantic-release',
+    'add',
+    '-m',
+    '{"channels":["alpha"]}',
+    'v1.0.0-alpha.11',
+  );
+  repo.git(repo.cwd, 'push', 'origin', '--tags', 'refs/notes/semantic-release');
+  repo.git(repo.cwd, 'checkout', '-b', 'rc');
+  repo.commit('chore: start release candidates');
   symlinkSync(
     fileURLToPath(new URL('../node_modules', import.meta.url)),
     join(repo.cwd, 'node_modules'),
@@ -59,7 +72,7 @@ test('project releases use local npm for alpha OIDC publication instead of host 
           ...service.env,
           PATH: `${hostBin}:${repo.env.PATH}`,
           GITHUB_ACTIONS: 'true',
-          GITHUB_REF: 'refs/heads/alpha',
+          GITHUB_REF: `refs/heads/${repo.git(repo.cwd, 'branch', '--show-current')}`,
           GITHUB_EVENT_NAME: 'push',
           NPM_ID_TOKEN: jwt,
           // The plugin verifies custom-registry credentials before the CLI
@@ -79,18 +92,47 @@ test('project releases use local npm for alpha OIDC publication instead of host 
   const refs = repo.refs();
   const preview = run(true);
   expect(preview.ok, preview.logs ?? preview.message).toBe(true);
-  expect(preview.result.nextRelease.version).toBe('1.0.0-alpha.1');
+  expect(preview.result, preview.logs).toBeTruthy();
+  expect(preview.result.nextRelease.version).toBe('1.0.0-rc.1');
   expect(repo.refs()).toBe(refs);
   expect(service.state().uploads).toEqual([]);
   expect(service.state().exchanges).toBeUndefined();
   const result = run(false);
   expect(result.ok, result.logs ?? result.message).toBe(true);
-  expect(result.result.nextRelease.version).toBe('1.0.0-alpha.1');
+  expect(result.result.nextRelease.version).toBe('1.0.0-rc.1');
   expect(service.state().exchanges).toHaveLength(1);
   expect(service.state().uploads).toEqual([
-    'npm:project-release-fixture@1.0.0-alpha.1',
+    'npm:project-release-fixture@1.0.0-rc.1',
   ]);
   expect(service.state().npmTags['project-release-fixture']).toEqual({
-    alpha: '1.0.0-alpha.1',
+    rc: '1.0.0-rc.1',
   });
+  expect(run(false).result).toBe(false);
+  repo.git(repo.cwd, 'checkout', 'alpha');
+  const retired = run(false);
+  expect(retired.ok, retired.logs ?? retired.message).toBe(true);
+  expect(retired.result).toBe(false);
+  expect(service.state().uploads).toHaveLength(1);
+  repo.git(repo.cwd, 'checkout', '-b', 'dev', 'rc');
+  repo.commit('chore: establish development branch');
+  const development = run(false);
+  expect(development.ok, development.logs ?? development.message).toBe(true);
+  expect(development.result).toBe(false);
+  expect(service.state().uploads).toHaveLength(1);
+  expect(service.state().exchanges).toHaveLength(1);
+  repo.git(repo.cwd, 'checkout', 'rc');
+  writeFileSync(join(repo.cwd, 'index.js'), 'export const value = 2;');
+  repo.git(repo.cwd, 'add', 'index.js');
+  repo.commit('fix: refine release candidate');
+  const next = run(false);
+  expect(next.ok, next.logs ?? next.message).toBe(true);
+  expect(next.result.nextRelease.version).toBe('1.0.0-rc.2');
+  expect(service.state().uploads).toEqual([
+    'npm:project-release-fixture@1.0.0-rc.1',
+    'npm:project-release-fixture@1.0.0-rc.2',
+  ]);
+  expect(service.state().npmTags['project-release-fixture']).toEqual({
+    rc: '1.0.0-rc.2',
+  });
+  expect(repo.tags()).toContain('v1.0.0-alpha.11');
 }, 60_000);
