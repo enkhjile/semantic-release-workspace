@@ -3,19 +3,15 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
-  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
-import { registry, servers } from './fixtures/registry.js';
-import { fixture, roots } from './fixtures/repository.js';
+import { cleanupFixtures } from './fixtures/cleanup.js';
+import { registry } from './fixtures/registry.js';
+import { fixture } from './fixtures/repository.js';
 
-afterEach(() => {
-  for (const server of servers.splice(0)) server.kill();
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
+afterEach(cleanupFixtures);
 
 test.each([
   { ecosystem: 'npm', override: false },

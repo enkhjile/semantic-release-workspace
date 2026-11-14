@@ -14,7 +14,6 @@ interface Edge {
   target: string;
   ecosystem: 'npm' | 'cargo';
   spec: string | null;
-  source: string | null;
   range: string | null;
   protocol: 'semver' | 'workspace' | 'local';
   alias: boolean;
@@ -149,7 +148,6 @@ function npmEdges(
         target: packageId(target),
         ecosystem: 'npm',
         spec,
-        source: rawSpec,
         range,
         protocol,
         alias,
@@ -224,7 +222,6 @@ function cargoEdges(
           target: packageId(target),
           ecosystem: 'cargo',
           spec,
-          source,
           range: spec,
           protocol: spec === null ? 'local' : 'semver',
           alias: false,
@@ -265,7 +262,7 @@ function update(edge: Edge, target: PackagePlan): DependencyUpdate | undefined {
     dependency: edge.target,
     manifestPath: edge.manifestPath,
     field: edge.field,
-    from: edge.source,
+    from: edge.spec,
     to,
     publishedRange,
   };

@@ -510,16 +510,161 @@ function cargoDependencyTables(data: Record<string, unknown>) {
     ...(record(data.target) ? Object.values(data.target).filter(record) : []),
   ];
 }
-function cargoDependencySections(data: Record<string, unknown>) {
-  return [
-    ['dependencies'],
-    ['build-dependencies', 'build_dependencies'],
-    ['dev-dependencies', 'dev_dependencies'],
-  ].flatMap((aliases) => {
-    const section = aliases.find((name) => data[name] !== undefined);
-    return section === undefined ? [] : [section];
-  });
+function* cargoDependencies(data: Record<string, unknown>) {
+  for (const table of cargoDependencyTables(data)) {
+    for (const aliases of [
+      ['dependencies'],
+      ['build-dependencies', 'build_dependencies'],
+      ['dev-dependencies', 'dev_dependencies'],
+    ]) {
+      const section = aliases.find((name) => table[name] !== undefined);
+      if (section === undefined) continue;
+      const dependencies = table[section];
+      if (!record(dependencies)) continue;
+      for (const [name, dependency] of Object.entries(dependencies))
+        yield { table, section, dependencies, name, dependency };
+    }
+  }
 }
+async function stageCargoDependencies(
+  context: VerifyConditionsContext,
+  source: string,
+  pkg: PackagePlan,
+  plan: ReleasePlan,
+  inventory: WorkspaceInventory,
+  config: Record<string, unknown>,
+): Promise<string | undefined> {
+  const original = parse(
+    (
+      await command(context, 'git', ['show', `${plan.head}:Cargo.toml`])
+    ).toString(),
+  );
+  const workspaceDependencies =
+    record(original.workspace) && record(original.workspace.dependencies)
+      ? original.workspace.dependencies
+      : {};
+  const member = inventory.packages.find(
+    (entry) => entry.ecosystem === 'cargo' && entry.name === pkg.name,
+  );
+  const runtimeWorkspaceDependencies = new Set<string>();
+  for (const { section, name, dependency } of cargoDependencies(
+    member?.manifest ?? {},
+  ))
+    if (
+      !section.startsWith('dev') &&
+      record(dependency) &&
+      dependency.workspace === true
+    )
+      runtimeWorkspaceDependencies.add(name);
+  let stagedCratesIoIndex: string | undefined;
+  const routeStagedCratesIo = (target: Destination) => {
+    if (
+      target.ecosystem !== 'cargo' ||
+      target.registry !== 'crates-io' ||
+      target.index === undefined ||
+      target.index === 'https://index.crates.io/'
+    )
+      return;
+    if (
+      stagedCratesIoIndex !== undefined &&
+      stagedCratesIoIndex !== target.index
+    )
+      return releaseError(
+        'Staged Cargo dependencies select different crates-io indexes.',
+        'EWORKSPACECONFIG',
+      );
+    stagedCratesIoIndex = target.index;
+  };
+  // Local path dependencies need a registry version even when this batch does not bump them.
+  for (const path of new Set([
+    'Cargo.toml',
+    ...inventory.packages
+      .filter((entry) => entry.ecosystem === 'cargo')
+      .map((entry) => join(entry.path, 'Cargo.toml')),
+  ])) {
+    const file = join(source, path);
+    const data = parse(await readFile(file, 'utf8'));
+    const omitted = new Set<string>();
+    let changed = false;
+    for (const {
+      table,
+      section,
+      dependencies: deps,
+      name,
+      dependency: dep,
+    } of cargoDependencies(data)) {
+      if (!record(dep)) continue;
+      const inherited =
+        dep.workspace === true ? workspaceDependencies[name] : dep;
+      if (
+        section.startsWith('dev') &&
+        record(inherited) &&
+        typeof inherited.path === 'string' &&
+        inherited.version === undefined
+      ) {
+        delete deps[name];
+        omitted.add(name);
+        changed = true;
+        continue;
+      }
+      if (typeof dep.path !== 'string') continue;
+      // Unused workspace definitions need no registry route. A sibling
+      // runtime user may have materialized a shared version during planning.
+      const declared = workspaceDependencies[name];
+      if (
+        table === data.workspace &&
+        record(declared) &&
+        declared.version === undefined &&
+        !runtimeWorkspaceDependencies.has(name)
+      )
+        continue;
+      const target = inventory.packages.find(
+        (entry) =>
+          entry.ecosystem === 'cargo' &&
+          entry.directory ===
+            resolve(
+              inventory.root,
+              path.slice(0, -'Cargo.toml'.length),
+              dep.path as string,
+            ),
+      );
+      if (!target) continue;
+      const planned = plan.packages.find(
+        (entry) => entry.id === `cargo:${target.name}`,
+      );
+      const version = planned?.nextVersion ?? planned?.currentVersion;
+      if (typeof dep.version !== 'string' && version) dep.version = version;
+      const targetDestination = await destination(context, config, target);
+      routeStagedCratesIo(targetDestination);
+      if (
+        targetDestination.registry === 'crates-io' &&
+        targetDestination.index === 'https://index.crates.io/'
+      )
+        delete dep.registry;
+      else dep.registry = targetDestination.registry;
+      // Resolve the published dependency without loading an excluded local workspace member.
+      delete dep.path;
+      changed = true;
+    }
+    if (omitted.size && record(data.features)) {
+      for (const { table, name } of cargoDependencies(data))
+        if (table !== data.workspace) omitted.delete(name);
+      // Native Cargo removes feature references to dev dependencies omitted
+      // from publication, while retaining aliases still used by other tables.
+      for (const [name, values] of Object.entries(data.features))
+        if (Array.isArray(values))
+          data.features[name] = values.filter(
+            (value) =>
+              typeof value !== 'string' ||
+              !value.includes('/') ||
+              !omitted.has(value.split('/')[0]?.replace(/\?$/, '') ?? ''),
+          );
+    }
+    if (changed) await writeFile(file, stringify(data));
+  }
+  return stagedCratesIoIndex;
+}
+
 export async function pack(
   context: VerifyConditionsContext,
   dest: Destination,
@@ -627,144 +772,14 @@ export async function pack(
   const source = join(directory, 'source');
   try {
     await stageSource(context, inventory.root, source, plan.head, true);
-    const original = parse(
-      (
-        await command(context, 'git', ['show', `${plan.head}:Cargo.toml`])
-      ).toString(),
+    const stagedCratesIoIndex = await stageCargoDependencies(
+      context,
+      source,
+      pkg,
+      plan,
+      inventory,
+      config,
     );
-    const workspaceDependencies =
-      record(original.workspace) && record(original.workspace.dependencies)
-        ? original.workspace.dependencies
-        : {};
-    const member = inventory.packages.find(
-      (entry) => entry.ecosystem === 'cargo' && entry.name === pkg.name,
-    );
-    const runtimeWorkspaceDependencies = new Set<string>();
-    for (const table of cargoDependencyTables(member?.manifest ?? {}))
-      for (const section of cargoDependencySections(table)) {
-        if (section.startsWith('dev')) continue;
-        const deps = table[section];
-        if (!record(deps)) continue;
-        for (const [name, dep] of Object.entries(deps))
-          if (record(dep) && dep.workspace === true)
-            runtimeWorkspaceDependencies.add(name);
-      }
-    let stagedCratesIoIndex: string | undefined;
-    const routeStagedCratesIo = (target: Destination) => {
-      if (
-        target.ecosystem !== 'cargo' ||
-        target.registry !== 'crates-io' ||
-        target.index === undefined ||
-        target.index === 'https://index.crates.io/'
-      )
-        return;
-      if (
-        stagedCratesIoIndex !== undefined &&
-        stagedCratesIoIndex !== target.index
-      )
-        return releaseError(
-          'Staged Cargo dependencies select different crates-io indexes.',
-          'EWORKSPACECONFIG',
-        );
-      stagedCratesIoIndex = target.index;
-    };
-    // Local path dependencies need a registry version even when this batch does not bump them.
-    for (const path of new Set([
-      'Cargo.toml',
-      ...inventory.packages
-        .filter((entry) => entry.ecosystem === 'cargo')
-        .map((entry) => join(entry.path, 'Cargo.toml')),
-    ])) {
-      const file = join(source, path);
-      const data = parse(await readFile(file, 'utf8'));
-      const tables = cargoDependencyTables(data);
-      const omitted = new Set<string>();
-      let changed = false;
-      for (const table of tables)
-        for (const section of cargoDependencySections(table)) {
-          const deps = table[section];
-          if (!record(deps)) continue;
-          for (const [name, dep] of Object.entries(deps)) {
-            if (!record(dep)) continue;
-            const inherited =
-              dep.workspace === true ? workspaceDependencies[name] : dep;
-            if (
-              section.startsWith('dev') &&
-              record(inherited) &&
-              typeof inherited.path === 'string' &&
-              inherited.version === undefined
-            ) {
-              delete deps[name];
-              omitted.add(name);
-              changed = true;
-              continue;
-            }
-            if (typeof dep.path !== 'string') continue;
-            // Unused workspace definitions need no registry route. A sibling
-            // runtime user may have materialized a shared version during planning.
-            const declared = workspaceDependencies[name];
-            if (
-              table === data.workspace &&
-              record(declared) &&
-              declared.version === undefined &&
-              !runtimeWorkspaceDependencies.has(name)
-            )
-              continue;
-            const target = inventory.packages.find(
-              (entry) =>
-                entry.ecosystem === 'cargo' &&
-                entry.directory ===
-                  resolve(
-                    inventory.root,
-                    path.slice(0, -'Cargo.toml'.length),
-                    dep.path as string,
-                  ),
-            );
-            if (!target) continue;
-            const planned = plan.packages.find(
-              (entry) => entry.id === `cargo:${target.name}`,
-            );
-            const version = planned?.nextVersion ?? planned?.currentVersion;
-            if (typeof dep.version !== 'string' && version)
-              dep.version = version;
-            const targetDestination = await destination(
-              context,
-              config,
-              target,
-            );
-            routeStagedCratesIo(targetDestination);
-            if (
-              targetDestination.registry === 'crates-io' &&
-              targetDestination.index === 'https://index.crates.io/'
-            )
-              delete dep.registry;
-            else dep.registry = targetDestination.registry;
-            // Resolve the published dependency without loading an excluded local workspace member.
-            delete dep.path;
-            changed = true;
-          }
-        }
-      if (omitted.size && record(data.features)) {
-        for (const table of tables)
-          if (table !== data.workspace)
-            for (const section of cargoDependencySections(table)) {
-              const deps = table[section];
-              if (record(deps))
-                for (const name of Object.keys(deps)) omitted.delete(name);
-            }
-        // Native Cargo removes feature references to dev dependencies omitted
-        // from publication, while retaining aliases still used by other tables.
-        for (const [name, values] of Object.entries(data.features))
-          if (Array.isArray(values))
-            data.features[name] = values.filter(
-              (value) =>
-                typeof value !== 'string' ||
-                !value.includes('/') ||
-                !omitted.has(value.split('/')[0]?.replace(/\?$/, '') ?? ''),
-            );
-      }
-      if (changed) await writeFile(file, stringify(data));
-    }
     const workspaceFile = join(source, 'Cargo.toml');
     const workspace = parse(await readFile(workspaceFile, 'utf8'));
     if (record(workspace.workspace)) {

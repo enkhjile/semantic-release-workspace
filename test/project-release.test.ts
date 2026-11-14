@@ -1,16 +1,13 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, expect, test } from 'vitest';
-import { registry, servers } from './fixtures/registry.js';
-import { fixture, roots } from './fixtures/repository.js';
+import { cleanupFixtures } from './fixtures/cleanup.js';
+import { registry } from './fixtures/registry.js';
+import { fixture } from './fixtures/repository.js';
 
-afterEach(() => {
-  for (const server of servers.splice(0)) server.kill();
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
+afterEach(cleanupFixtures);
 
 test('project releases use local npm for alpha OIDC publication instead of host npm', async () => {
   const repo = fixture();

@@ -1,13 +1,8 @@
-import { rmSync } from 'node:fs';
 import { afterEach, expect, test } from 'vitest';
-import { registry, servers } from './fixtures/registry.js';
-import { roots } from './fixtures/repository.js';
+import { cleanupFixtures } from './fixtures/cleanup.js';
+import { registry } from './fixtures/registry.js';
 
-afterEach(() => {
-  for (const server of servers.splice(0)) server.kill();
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
+afterEach(cleanupFixtures);
 
 test('keeps registry HTTP connections alive through release lifecycle gaps', async () => {
   const service = await registry();

@@ -23,10 +23,10 @@ function changelogOrigins(
   path: string,
   planning: Planning,
   ancestors: Map<string, number>,
-): { origins: ChangelogOrigin[]; history: ChangelogOrigin[] } {
+): ChangelogOrigin[] {
   // Root history survives package moves and releases of other members. Legacy
   // member changelogs remain untouched; users can curate them into the root file.
-  const origins = planning.current.history
+  return planning.current.history
     .flatMap((journal) => {
       const previousPrerelease = journal.planning?.plan.release?.prerelease;
       if (
@@ -61,7 +61,6 @@ function changelogOrigins(
         (ancestors.get(a.journal.head) ?? 0) -
         (ancestors.get(b.journal.head) ?? 0),
     );
-  return { origins, history: origins };
 }
 
 async function verifyChangelog(
@@ -113,7 +112,7 @@ export async function changelogChanges(
     );
   let base = before ?? '';
   const retained = new Set<string>();
-  const { origins, history } = changelogOrigins(path, planning, ancestors);
+  const origins = changelogOrigins(path, planning, ancestors);
   for (const origin of origins) {
     if (before !== origin.change.before) continue;
     const body = origin.change.after.replace(title, '');
@@ -131,7 +130,7 @@ export async function changelogChanges(
       continue;
     }
     // Archived before/after snapshots prove shared suffixes; notes remain opaque.
-    const common = history
+    const common = origins
       .flatMap((origin) =>
         [
           origin.change.after,

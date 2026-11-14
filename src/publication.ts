@@ -196,49 +196,65 @@ export async function preflight(
   }
   return result;
 }
+type RetainedArtifact = Awaited<ReturnType<typeof readArtifact>>;
+
+async function verifiedArtifact(
+  context: VerifyConditionsContext,
+  planning: Planning,
+  execution: Execution,
+  entry: PublicationPackage,
+  cached?: RetainedArtifact,
+): Promise<RetainedArtifact> {
+  const pkg = planning.plan.packages.find((pkg) => pkg.id === entry.id);
+  if (
+    !pkg ||
+    !entry.artifact ||
+    entry.artifact.ref !==
+      refFor(planning.plan.head, entry.id, releaseScope(context))
+  )
+    return releaseError(
+      'Retained artifact belongs to a different release.',
+      'EWORKSPACEARTIFACT',
+    );
+  const artifact = cached ?? (await readArtifact(context, entry.artifact));
+  if (
+    (await git(context, 'rev-parse', `${entry.artifact.commit}^`)) !==
+    execution.prepared
+  )
+    return releaseError(
+      'Retained artifact parent does not match this release.',
+      'EWORKSPACEARTIFACT',
+    );
+  await validateArtifact(
+    entry.destination,
+    pkg,
+    artifact.bytes,
+    artifact.metadata,
+  );
+  if (entry.destination.ecosystem === 'npm')
+    await verifyProvenance(
+      context,
+      entry.destination,
+      pkg,
+      artifact.bytes,
+      artifact.metadata,
+      planning.plan.head,
+    );
+  return artifact;
+}
+
 async function retainedArtifacts(
   context: VerifyConditionsContext,
   planning: Planning,
   execution: Execution,
 ) {
-  const retained = new Map<string, Awaited<ReturnType<typeof readArtifact>>>();
+  const retained = new Map<string, RetainedArtifact>();
   for (const entry of execution.packages) {
     if (!entry.artifact) continue;
-    const pkg = planning.plan.packages.find((pkg) => pkg.id === entry.id);
-    if (
-      !pkg ||
-      entry.artifact.ref !==
-        refFor(planning.plan.head, entry.id, releaseScope(context))
-    )
-      return releaseError(
-        'Retained artifact belongs to a different release.',
-        'EWORKSPACEARTIFACT',
-      );
-    const artifact = await readArtifact(context, entry.artifact);
-    if (
-      (await git(context, 'rev-parse', `${entry.artifact.commit}^`)) !==
-      execution.prepared
-    )
-      return releaseError(
-        'Retained artifact parent does not match this release.',
-        'EWORKSPACEARTIFACT',
-      );
-    await validateArtifact(
-      entry.destination,
-      pkg,
-      artifact.bytes,
-      artifact.metadata,
+    retained.set(
+      entry.id,
+      await verifiedArtifact(context, planning, execution, entry),
     );
-    if (entry.destination.ecosystem === 'npm')
-      await verifyProvenance(
-        context,
-        entry.destination,
-        pkg,
-        artifact.bytes,
-        artifact.metadata,
-        planning.plan.head,
-      );
-    retained.set(entry.id, artifact);
   }
   return retained;
 }
@@ -409,39 +425,13 @@ export async function publishPackages(
         }
         await persist();
       }
-      if (
-        entry.artifact.ref !==
-        refFor(planning.plan.head, id, releaseScope(context))
-      )
-        return releaseError(
-          'Retained artifact belongs to a different release.',
-          'EWORKSPACEARTIFACT',
-        );
-      const artifact =
-        retained.get(id) ?? (await readArtifact(context, entry.artifact));
-      if (
-        (await git(context, 'rev-parse', `${entry.artifact.commit}^`)) !==
-        execution.prepared
-      )
-        return releaseError(
-          'Retained artifact parent does not match this release.',
-          'EWORKSPACEARTIFACT',
-        );
-      await validateArtifact(
-        entry.destination,
-        pkg,
-        artifact.bytes,
-        artifact.metadata,
+      const artifact = await verifiedArtifact(
+        context,
+        planning,
+        execution,
+        entry,
+        retained.get(id),
       );
-      if (entry.destination.ecosystem === 'npm')
-        await verifyProvenance(
-          context,
-          entry.destination,
-          pkg,
-          artifact.bytes,
-          artifact.metadata,
-          planning.plan.head,
-        );
       const expected =
         entry.destination.ecosystem === 'npm'
           ? entry.artifact.integrity

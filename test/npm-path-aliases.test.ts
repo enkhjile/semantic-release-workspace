@@ -1,18 +1,15 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, test } from 'vitest';
 import { archiveFile } from '../src/archive.js';
-import { registry, servers } from './fixtures/registry.js';
-import { fixture, roots } from './fixtures/repository.js';
+import { cleanupFixtures } from './fixtures/cleanup.js';
+import { registry } from './fixtures/registry.js';
+import { fixture } from './fixtures/repository.js';
 
-afterEach(() => {
-  for (const server of servers.splice(0)) server.kill();
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
+afterEach(cleanupFixtures);
 
 test.each(
   ['file:', 'link:', 'workspace:'].flatMap((protocol) =>
