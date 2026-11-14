@@ -1,19 +1,11 @@
-import {
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
 import type { PlanningState } from '../src/plan-types.js';
-import { fixture, roots } from './fixtures/repository.js';
+import { cleanupFixtures } from './fixtures/cleanup.js';
+import { fixture } from './fixtures/repository.js';
 
-afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
+afterEach(cleanupFixtures);
 function setup() {
   const f = fixture();
   function file(path: string, content: string) {
@@ -128,54 +120,35 @@ describe('package planning with real semantic-release', {
       { id: 'npm:b', nextVersion: '1.0.1' },
     ]);
   });
-  test('npm dependency chains coordinate runtime, peer, workspace and private packages without releasing dev-only dependents', () => {
+  test('npm runtime, peer, dev and workspace references do not release unchanged dependents', () => {
     const f = setup();
-    f.npm('a', '1.0.0', { private: true });
-    f.npm('b', '1.0.0', { dependencies: { a: '1.0.0' } });
-    f.npm('c', '1.0.0', { optionalDependencies: { b: '1.0.0' } });
-    f.npm('dev', '1.0.0', { devDependencies: { a: '1.0.0' } });
-    f.npm('peer', '1.0.0', { peerDependencies: { a: '1.0.0' } });
-    f.npm('workspace', '1.0.0', { dependencies: { alias: 'workspace:a@*' } });
+    f.npm('core', '1.0.0', { private: true });
+    for (const section of [
+      'dependencies',
+      'optionalDependencies',
+      'devDependencies',
+      'peerDependencies',
+    ])
+      f.npm(section, '1.0.0', { [section]: { core: '1.0.0' } });
+    f.npm('local', '1.0.0', { dependencies: { core: 'workspace:*' } });
     f.change('chore: setup');
-    f.file('packages/a/index.js', 'feature');
-    f.change('feat: enhance a');
+    f.file('packages/core/index.js', 'feature');
+    f.change('feat: enhance core');
     const result = plan(f);
-    expect(result.packages).toMatchObject([
-      { id: 'npm:a', nextVersion: '1.1.0', private: true },
-      {
-        id: 'npm:b',
-        nextVersion: '1.0.1',
-        dependencyUpdates: [
-          { dependency: 'npm:a', from: '1.0.0', to: '1.1.0' },
-        ],
-      },
-      { id: 'npm:c', nextVersion: '1.0.1' },
-      {
-        id: 'npm:dev',
-        nextVersion: null,
-        dependencyUpdates: [{ dependency: 'npm:a', to: '1.1.0' }],
-      },
-      { id: 'npm:peer', nextVersion: '2.0.0', type: 'major' },
-      {
-        id: 'npm:workspace',
-        nextVersion: '1.0.1',
-        dependencyUpdates: [
-          { to: 'workspace:a@*', publishedRange: 'npm:a@1.1.0' },
-        ],
-      },
-    ]);
     expect(
-      result.groups.indexOf(
-        result.groups.find((group: string[]) => group.includes('npm:a')),
+      result.packages.filter(
+        (pkg: { nextVersion: string | null }) => pkg.nextVersion,
       ),
-    ).toBeLessThan(
-      result.groups.indexOf(
-        result.groups.find((group: string[]) => group.includes('npm:b')),
+    ).toMatchObject([{ id: 'npm:core', nextVersion: '1.1.0', private: true }]);
+    expect(
+      result.packages.every(
+        (pkg: { dependencyUpdates: unknown[] }) =>
+          !pkg.dependencyUpdates.length,
       ),
-    );
+    ).toBe(true);
   });
 
-  test('dependency cycles settle once without replacing direct minor signals', () => {
+  test('explicit dependency cycles do not propagate release signals', () => {
     const f = setup();
     f.npm('a', '1.0.0', { dependencies: { b: '1.0.0' } });
     f.npm('b', '1.0.0', { dependencies: { a: '1.0.0' } });
@@ -184,58 +157,15 @@ describe('package planning with real semantic-release', {
     f.change('feat: enhance a');
     const result = plan(f);
     expect(result.packages).toMatchObject([
-      { id: 'npm:a', nextVersion: '1.1.0', type: 'minor' },
-      { id: 'npm:b', nextVersion: '1.0.1', type: 'patch' },
-    ]);
-    expect(result.groups).toEqual([['npm:a', 'npm:b']]);
-  });
-
-  test('Cargo bare versions use caret compatibility and renamed inherited path dependencies coordinate across target tables', () => {
-    const f = setup();
-    f.file(
-      'Cargo.toml',
-      '[workspace]\nmembers=["crates/*"]\n[workspace.package]\nversion="0.2.3"\n[workspace.dependencies]\nrenamed={package="core",path="crates/core",version="0.2.3"}\n',
-    );
-    f.file(
-      'crates/core/Cargo.toml',
-      '[package]\nname="core"\nversion.workspace=true\npublish=false\n',
-    );
-    f.file(
-      'crates/app/Cargo.toml',
-      `[package]\nname="app"\nversion="1.0.0"\n[target.'cfg(unix)'.build-dependencies]\nrenamed.workspace=true\n`,
-    );
-    f.file(
-      'crates/compatible/Cargo.toml',
-      '[package]\nname="compatible"\nversion="1.0.0"\n[dependencies]\napp={path="../app",version="1.0.0"}\n',
-    );
-    f.npm('core');
-    f.change('chore: setup');
-    f.file('crates/core/src/lib.rs', 'feature');
-    f.change('feat: enhance core');
-    const result = plan(f);
-    expect(result.packages).toMatchObject([
       {
-        id: 'cargo:app',
-        nextVersion: '1.0.1',
-        dependencyUpdates: [
-          {
-            dependency: 'cargo:core',
-            manifestPath: 'Cargo.toml',
-            field: ['workspace', 'dependencies', 'renamed', 'version'],
-            from: '0.2.3',
-            to: '0.3.0',
-          },
-        ],
+        id: 'npm:a',
+        nextVersion: '1.1.0',
+        type: 'minor',
+        dependencyUpdates: [],
       },
-      { id: 'cargo:compatible', nextVersion: null },
-      {
-        id: 'cargo:core',
-        currentVersion: '0.2.3',
-        nextVersion: '0.3.0',
-        private: true,
-      },
-      { id: 'npm:core', nextVersion: null },
+      { id: 'npm:b', nextVersion: null, type: null, dependencyUpdates: [] },
     ]);
+    expect(result.groups).toEqual([['npm:a']]);
   });
 
   test('reachable namespaced tags set package-specific baselines and exclude covered commits', () => {
@@ -269,48 +199,6 @@ describe('package planning with real semantic-release', {
     f.change('fix: ignored [skip release]');
     expect(f.run({ dryRun: true }).result).toBe(false);
   });
-  test('completed batches retain package versions and projected dependency ranges without rewriting manifests', () => {
-    const f = setup();
-    f.npm('a');
-    f.npm('b', '1.0.0', { dependencies: { a: '1.0.0' } });
-    f.npm('peer', '1.0.0', { peerDependencies: { a: '^1.0.0' } });
-    f.change('chore: setup');
-    f.file('packages/a/index.js', 'breaking');
-    f.change('feat: new API\n\nBREAKING CHANGE: removed old API');
-    const manifest = readFileSync(
-      join(f.cwd, 'packages/b/package.json'),
-      'utf8',
-    );
-    const first = f.run();
-    expect(first.ok, first.logs).toBe(true);
-    expect(f.state().schemaVersion).toBe(2);
-    expect(f.state().planning.versions).toEqual(
-      expect.arrayContaining([
-        {
-          id: 'npm:a',
-          version: '2.0.0',
-          head: f.git(f.cwd, 'rev-parse', 'HEAD'),
-        },
-      ]),
-    );
-    expect(f.run().result).toBe(false);
-    f.file('packages/a/index.js', 'fixed');
-    f.change('fix: repair new API');
-    expect(plan(f).packages).toMatchObject([
-      { id: 'npm:a', currentVersion: '2.0.0', nextVersion: '2.0.1' },
-      {
-        id: 'npm:b',
-        currentVersion: '1.0.1',
-        nextVersion: '1.0.2',
-        dependencyUpdates: [{ from: '1.0.0', to: '2.0.1' }],
-      },
-      { id: 'npm:peer', currentVersion: '2.0.0', nextVersion: null },
-    ]);
-    expect(readFileSync(join(f.cwd, 'packages/b/package.json'), 'utf8')).toBe(
-      manifest,
-    );
-  });
-
   test('fresh-clone retries preserve exact package plans while changed plans are rejected', () => {
     const f = setup();
     f.npm('a');
@@ -338,7 +226,7 @@ describe('package planning with real semantic-release', {
       f
         .state()
         .planning.versions.map((entry: { version: string }) => entry.version),
-    ).toEqual(['1.1.0', '1.0.1']);
+    ).toEqual(['1.1.0']);
     expect(f.run({}, clone).result).toBe(false);
   });
 
@@ -444,9 +332,14 @@ describe('package planning with real semantic-release', {
     if (!retained) throw new Error('Missing baseline');
     retained.version = '99.0.0';
     const projection = structuredClone(original);
-    const range = projection.planning.dependencyRanges[0];
-    if (!range) throw new Error('Missing projection');
-    range.to = '^99.0.0';
+    projection.planning.dependencyRanges.push({
+      dependency: 'npm:a',
+      manifestPath: 'packages/peer/package.json',
+      field: ['peerDependencies', 'a'],
+      from: '^1.0.0',
+      to: '^99.0.0',
+      publishedRange: '^99.0.0',
+    });
     const downgrade = structuredClone(original);
     downgrade.schemaVersion = 1;
     for (const state of [broken, projection, downgrade]) {

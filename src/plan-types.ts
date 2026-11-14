@@ -40,6 +40,8 @@ export interface ReleasePlan {
   baseHead: string | null;
   packages: PackagePlan[];
   groups: string[][];
+  dependencyPolicy?: 'independent' | 'synchronize';
+  stagingDependencies?: DependencyUpdate[];
 }
 
 export interface ChangelogChange {

@@ -2,8 +2,14 @@ name: Verify and release
 
 on:
   pull_request:
+    paths-ignore: &docs-paths
+      - README.md
+      - CONTRIBUTING.md
+      - AGENTS.md
+      - "docs/**/*.md"
   push:
-    branches: [main, alpha]
+    branches: [main, rc]
+    paths-ignore: *docs-paths
   workflow_dispatch:
 
 permissions:
@@ -15,37 +21,17 @@ concurrency:
 
 jobs:
   verify:
-    name: Verify (Node ${{ matrix.node }})
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - node: project
-            # Empty lets pnpm/setup read devEngines.runtime from package.json.
-            runtime: ""
-          - node: latest
-            runtime: node@latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Node.js, pnpm, and dependencies
-        uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
-        with:
-          runtime: ${{ matrix.runtime }}
-          cache: true
-          require-lockfile: true
-      - name: Install stable Rust for Cargo integration tests
-        run: |
-          rustup toolchain install stable --profile minimal --no-self-update
-          rustup default stable
-      - run: pnpm check
-      - run: pnpm pack
+    uses: ./.github/workflows/verify.yml
 
   release:
     needs: verify
     if: >-
       github.event_name != 'pull_request' &&
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/alpha')
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/rc')
     runs-on: ubuntu-latest
+    concurrency:
+      group: npm-release
+      cancel-in-progress: false
     permissions:
       contents: write
       id-token: write
@@ -60,6 +46,8 @@ jobs:
           cache: true
           require-lockfile: true
       - run: pnpm build
+      - name: Report publishing npm version
+        run: pnpm exec npm --version
       - run: pnpm release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

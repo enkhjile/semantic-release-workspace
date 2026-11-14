@@ -13,29 +13,26 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, test, vi } from 'vitest';
 import { archiveFile } from '../src/archive.js';
-import { registry, servers } from './fixtures/registry.js';
-import { fixture, roots } from './fixtures/repository.js';
+import { cleanupFixtures } from './fixtures/cleanup.js';
+import { registry } from './fixtures/registry.js';
+import { fixture } from './fixtures/repository.js';
 
 vi.setConfig({ testTimeout: 120_000 });
 
-afterEach(() => {
-  for (const server of servers.splice(0)) server.kill();
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
-function workspace() {
+afterEach(cleanupFixtures);
+function workspace(directory = 'packages') {
   const repo = fixture();
   writeFileSync(
     join(repo.cwd, 'package.json'),
-    JSON.stringify({ private: true, workspaces: ['packages/*'] }),
+    JSON.stringify({ private: true, workspaces: [`${directory}/*`] }),
   );
-  mkdirSync(join(repo.cwd, 'packages/lib'), { recursive: true });
+  mkdirSync(join(repo.cwd, directory, 'lib'), { recursive: true });
   writeFileSync(
-    join(repo.cwd, 'packages/lib/package.json'),
+    join(repo.cwd, directory, 'lib/package.json'),
     JSON.stringify({ name: 'publication-fixture', version: '1.0.0' }),
   );
   writeFileSync(
-    join(repo.cwd, 'packages/lib/index.js'),
+    join(repo.cwd, directory, 'lib/index.js'),
     'export const value = 1;\n',
   );
   repo.git(repo.cwd, 'add', '.');
@@ -163,6 +160,31 @@ test('fresh-clone retry replays an artifact without rerunning package scripts', 
   expect(() => readFileSync(join(clone, 'packages/lib/built.js'))).toThrow();
 });
 
+test('fresh-clone retries preserve leading whitespace in package paths', async () => {
+  const repo = workspace(' packages');
+  const service = await registry();
+  const settings = {
+    env: service.env,
+    pluginConfig: { publish: true, npm: { registry: service.url } },
+  };
+  service.control('reject');
+  const first = repo.run(settings);
+  expect(first.ok).toBe(false);
+  expect(first.codes).toContain('EWORKSPACEPUBLISH');
+  const artifact = repo.state().execution.packages[0].artifact;
+  expect(artifact).toBeDefined();
+  expect(service.state().uploads).toEqual([]);
+  const clone = repo.clone();
+  expect(repo.git(clone, 'status', '--porcelain')).toBe('');
+  service.control('');
+  const retry = repo.run(settings, clone);
+  expect(retry.ok, retry.logs).toBe(true);
+  expect(service.state().uploads).toEqual(['npm:publication-fixture@1.1.0']);
+  expect(repo.state().execution.packages[0].artifact).toEqual(artifact);
+  expect(repo.state().status).toBe('complete');
+  expect(repo.git(clone, 'status', '--porcelain')).toBe('');
+});
+
 test('Cargo publishes dependency-first using verified native crate artifacts and inherited manifests', async () => {
   const { repo, service } = await cargoWorkspace();
   const settings = {
@@ -205,7 +227,7 @@ async function cargoWorkspace() {
   );
   writeFileSync(
     join(repo.cwd, 'Cargo.toml'),
-    '[workspace]\nmembers = ["crates/*"]\nresolver = "3"\n[workspace.package]\nversion = "1.0.0"\n[workspace.dependencies]\nrenamed = { package = "fixture-core", path = "crates/core", version = "=1.0.0" }\n',
+    '[workspace]\nmembers = ["crates/*"]\nresolver = "3"\n[workspace.package]\nversion = "1.0.0"\n[workspace.dependencies]\nrenamed = { package = "fixture-core", path = "crates/core", version = "=1.1.0" }\n',
   );
   writeFileSync(
     join(repo.cwd, 'crates/core/Cargo.toml'),
@@ -391,7 +413,7 @@ test('npm workspace aliases and local dependencies are converted only in the art
   const manifest = JSON.parse(await archiveFile(bytes, 'package/package.json'));
   expect(manifest.dependencies).toEqual({
     alias: 'npm:publication-fixture@^1.1.0',
-    local: '1.1.0',
+    local: 'npm:publication-fixture@1.1.0',
   });
   expect(
     repo.git(
@@ -713,6 +735,62 @@ test.each(['restricted', null])(
     expect(result.ok, result.logs).toBe(true);
     expect(repo.state().execution.packages[0].destination.access).toBe(access);
     expect(service.state().npm['@fixture/access']['1.1.0'].access).toBe(access);
+  },
+);
+
+test.each(['public', 'restricted'])(
+  'explicit npm access null overrides package publishConfig access %s',
+  async (access) => {
+    const repo = workspace();
+    const service = await registry();
+    const file = join(repo.cwd, 'packages/lib/package.json');
+    const before = JSON.stringify({
+      name: '@fixture/access',
+      version: '1.0.0',
+      publishConfig: { access },
+    });
+    writeFileSync(file, before);
+    repo.git(repo.cwd, 'add', '.');
+    repo.commit('fix: configure package access');
+    const settings = {
+      env: service.env,
+      pluginConfig: {
+        publish: true,
+        npm: { registry: service.url, access: null },
+      },
+    };
+    const refs = repo.refs();
+    const dry = repo.run({ ...settings, dryRun: true });
+    expect(dry.ok, dry.logs).toBe(true);
+    expect(repo.refs()).toBe(refs);
+    expect(service.state().requests).toEqual([]);
+    service.control('reject');
+    const first = repo.run(settings);
+    expect(first.ok).toBe(false);
+    expect(first.codes, first.logs).toContain('EWORKSPACEPUBLISH');
+    const artifact = repo.state().execution.packages[0].artifact;
+    expect(artifact).toBeDefined();
+    service.control('');
+    const clone = repo.clone();
+    const retry = repo.run(settings, clone);
+    expect(retry.ok, retry.logs).toBe(true);
+    const entry = service.state().npm['@fixture/access']['1.1.0'];
+    const manifest = JSON.parse(
+      await archiveFile(
+        Buffer.from(entry.artifact, 'base64'),
+        'package/package.json',
+      ),
+    );
+    expect(manifest.publishConfig.access ?? null).toBeNull();
+    expect(entry.access).toBeNull();
+    expect(repo.state().execution.packages[0].destination.access).toBeNull();
+    expect(repo.state().execution.packages[0].artifact).toEqual(artifact);
+    expect(service.state().uploads).toEqual(['npm:@fixture/access@1.1.0']);
+    expect(readFileSync(file, 'utf8')).toBe(before);
+    expect(readFileSync(join(clone, 'packages/lib/package.json'), 'utf8')).toBe(
+      before,
+    );
+    expect(repo.git(clone, 'status', '--porcelain')).toBe('');
   },
 );
 

@@ -1,5 +1,10 @@
 import type { VerifyConditionsContext } from 'semantic-release';
-import { ciProvider, identityToken, serviceURL } from './npm-identity.js';
+import {
+  ciProvider,
+  identityForAudience,
+  identityToken,
+  serviceURL,
+} from './npm-identity.js';
 import type { Destination } from './publication-state.js';
 import { releaseError } from './release-io.js';
 import { record } from './workspace-files.js';
@@ -56,10 +61,11 @@ export function createCargoIdentity(
         }
         const env = context.env ?? process.env;
         if (!hasCargoIdentity(env)) throw new Error();
+        const audience = api.replace(/^https?:\/\//, '');
         const jwt =
           ciProvider(env) === 'gitlab'
-            ? env.CRATES_IO_ID_TOKEN
-            : await identityToken(env, api.replace(/^https?:\/\//, ''));
+            ? identityForAudience(env.CRATES_IO_ID_TOKEN ?? '', audience)
+            : await identityToken(env, audience);
         const created = Date.now();
         const response = await fetch(
           `${api}/api/v1/trusted_publishing/tokens`,

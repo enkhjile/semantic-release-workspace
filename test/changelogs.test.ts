@@ -2,7 +2,6 @@ import { spawn } from 'node:child_process';
 import {
   mkdirSync,
   readFileSync,
-  rmSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -12,15 +11,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, test, vi } from 'vitest';
 import { archiveFile } from '../src/archive.js';
-import { registry, servers } from './fixtures/registry.js';
-import { fixture, roots } from './fixtures/repository.js';
+import { cleanupFixtures } from './fixtures/cleanup.js';
+import { registry } from './fixtures/registry.js';
+import { fixture } from './fixtures/repository.js';
 
 vi.setConfig({ testTimeout: 120_000 });
-afterEach(() => {
-  for (const server of servers.splice(0)) server.kill();
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
+afterEach(cleanupFixtures);
 async function workspace() {
   const repo = fixture();
   const service = await registry();
@@ -96,10 +92,13 @@ function released(
 ) {
   return repo.git(repo.remote, 'show', `${tag}:${path}`);
 }
-test('changelogs are previewed without writes and included in npm/Cargo snapshots and native artifacts', async () => {
+test('one root changelog previews without writes and records npm/Cargo sections in retained snapshots', async () => {
   const { repo, service, settings } = await workspace();
   const history = '# Changelog\n\n## 0.9.0\n\nPrevious library history.\n';
-  writeFileSync(join(repo.cwd, 'packages/lib/CHANGELOG.md'), history);
+  writeFileSync(join(repo.cwd, 'CHANGELOG.md'), history);
+  const memberHistory =
+    '# Library history\n\nKept explicitly by the maintainer.\n';
+  writeFileSync(join(repo.cwd, 'packages/lib/CHANGELOG.md'), memberHistory);
   repo.git(repo.cwd, 'add', '.');
   repo.commit('chore: preserve old history');
   change(repo, 'packages/lib/index.js', 'feat: add searchable library');
@@ -110,42 +109,29 @@ test('changelogs are previewed without writes and included in npm/Cargo snapshot
   expect(JSON.stringify(dry.result)).toContain('CHANGELOG.md');
   expect(repo.refs()).toBe(refs);
   expect(service.state().uploads).toEqual([]);
-  expect(
-    readFileSync(join(repo.cwd, 'packages/lib/CHANGELOG.md'), 'utf8'),
-  ).toBe(history);
+  expect(readFileSync(join(repo.cwd, 'CHANGELOG.md'), 'utf8')).toBe(history);
   expect(() =>
     readFileSync(join(repo.cwd, 'packages/app/CHANGELOG.md')),
   ).toThrow();
   let result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
-  const lib = released(repo, 'npm/lib@1.1.0', 'packages/lib/CHANGELOG.md');
+  const lib = released(repo, 'npm/lib@1.1.0', 'CHANGELOG.md');
   expect(lib).toContain('npm:lib@1.1.0');
   expect(lib).toContain('add searchable library');
   expect(lib).toContain('Previous library history.');
-  expect(
-    released(repo, 'npm/app@1.0.1', 'packages/app/CHANGELOG.md'),
-  ).toContain('### Dependencies');
-  expect(
-    released(repo, 'cargo/notes-core@1.0.1', 'crates/core/CHANGELOG.md'),
-  ).toContain('correct crate behavior');
+  expect(lib).toContain('cargo:notes-core@1.0.1');
+  expect(lib).not.toContain('npm:app@');
+  expect(released(repo, 'npm/lib@1.1.0', 'packages/lib/CHANGELOG.md')).toBe(
+    memberHistory.trim(),
+  );
   expect(
     await archiveFile(
       Buffer.from(service.state().npm.lib['1.1.0'].artifact, 'base64'),
       'package/CHANGELOG.md',
     ),
-  ).toContain('add searchable library');
-  expect(
-    await archiveFile(
-      Buffer.from(
-        service.state().cargo['notes-core']['1.0.1'].artifact,
-        'base64',
-      ),
-      'notes-core-1.0.1/CHANGELOG.md',
-    ),
-  ).toContain('correct crate behavior');
-  expect(
-    readFileSync(join(repo.cwd, 'packages/lib/CHANGELOG.md'), 'utf8'),
-  ).toBe(history);
+  ).toBe(memberHistory);
+  expect(released(repo, 'cargo/notes-core@1.0.1', 'CHANGELOG.md')).toBe(lib);
+  expect(readFileSync(join(repo.cwd, 'CHANGELOG.md'), 'utf8')).toBe(history);
   expect(repo.git(repo.cwd, 'status', '--porcelain')).toBe('');
   expect(() =>
     readFileSync(join(repo.cwd, 'crates/core/CHANGELOG.md')),
@@ -153,7 +139,7 @@ test('changelogs are previewed without writes and included in npm/Cargo snapshot
   change(repo, 'packages/lib/index.js', 'fix: preserve released history');
   result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
-  const next = released(repo, 'npm/lib@1.1.1', 'packages/lib/CHANGELOG.md');
+  const next = released(repo, 'npm/lib@1.1.1', 'CHANGELOG.md');
   expect(next.indexOf('npm:lib@1.1.1')).toBeLessThan(
     next.indexOf('npm:lib@1.1.0'),
   );
@@ -164,15 +150,16 @@ test('changelogs are previewed without writes and included in npm/Cargo snapshot
 test('fresh-clone retries reuse exact changelog bytes and reject policy drift without duplicating uploads', async () => {
   const { repo, service, settings } = await workspace();
   change(repo, 'packages/lib/index.js', 'feat: retry changelog feature');
+  change(repo, 'crates/core/src/lib.rs', 'fix: retry crate changelog');
   service.control('reject');
   const first = repo.run(settings);
   expect(first.ok).toBe(false);
   const frozen = repo.state().planning.releaseNotes;
-  expect(frozen.changelogs).toHaveLength(2);
+  expect(frozen.changelogs).toHaveLength(1);
   const retained = repo
     .state()
     .execution.packages.find(
-      (pkg: { id: string }) => pkg.id === 'npm:lib',
+      (pkg: { id: string }) => pkg.id === 'cargo:notes-core',
     ).artifact;
   const clone = repo.clone();
   const refs = repo.refs();
@@ -197,8 +184,9 @@ test('fresh-clone retries reuse exact changelog bytes and reject policy drift wi
   expect(
     repo
       .state()
-      .execution.packages.find((pkg: { id: string }) => pkg.id === 'npm:lib')
-      .artifact,
+      .execution.packages.find(
+        (pkg: { id: string }) => pkg.id === 'cargo:notes-core',
+      ).artifact,
   ).toEqual(retained);
   expect(service.state().uploads).toHaveLength(2);
   expect(repo.git(clone, 'status', '--porcelain')).toBe('');
@@ -212,10 +200,13 @@ test('changelogs are opt-in and publish:false leaves the preview files absent', 
   const { repo, service, settings } = await workspace();
   change(repo, 'packages/lib/index.js', 'feat: optional changelog');
   const preview = repo.run({
-    pluginConfig: { publish: false, changelog: true },
+    pluginConfig: {
+      publish: false,
+      changelog: true,
+    },
   });
   expect(preview.ok, preview.logs).toBe(true);
-  expect(repo.state().planning.releaseNotes.changelogs).toHaveLength(2);
+  expect(repo.state().planning.releaseNotes.changelogs).toHaveLength(1);
   expect(repo.git(repo.cwd, 'status', '--porcelain')).toBe('');
   expect(service.state().uploads).toEqual([]);
   change(repo, 'packages/lib/index.js', 'fix: publish without generated files');
@@ -235,22 +226,20 @@ test('explicitly committed changelog edits take precedence over released history
   change(repo, 'packages/lib/index.js', 'feat: old generated note');
   expect(repo.run(settings).ok).toBe(true);
   const edited = '# Maintained history\n\nCurated migration instructions.\n';
-  writeFileSync(join(repo.cwd, 'packages/lib/CHANGELOG.md'), edited);
+  writeFileSync(join(repo.cwd, 'CHANGELOG.md'), edited);
   repo.git(repo.cwd, 'add', '.');
   repo.commit('chore: curate changelog');
   change(repo, 'packages/lib/index.js', 'fix: follow curated history');
   const result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
-  const text = released(repo, 'npm/lib@1.1.1', 'packages/lib/CHANGELOG.md');
+  const text = released(repo, 'npm/lib@1.1.1', 'CHANGELOG.md');
   expect(text).toContain('Curated migration instructions.');
   expect(text).not.toContain('old generated note');
-  expect(
-    readFileSync(join(repo.cwd, 'packages/lib/CHANGELOG.md'), 'utf8'),
-  ).toBe(edited);
+  expect(readFileSync(join(repo.cwd, 'CHANGELOG.md'), 'utf8')).toBe(edited);
 });
 
 test('npm and Cargo packages sharing a directory retain both histories in one changelog', async () => {
-  const { repo, service, settings } = await workspace();
+  const { repo, settings } = await workspace();
   writeFileSync(
     join(repo.cwd, 'Cargo.toml'),
     '[workspace]\nmembers = ["packages/lib"]\nresolver = "3"\n',
@@ -269,22 +258,13 @@ test('npm and Cargo packages sharing a directory retain both histories in one ch
   change(repo, 'packages/lib/index.js', 'feat: first dual package release');
   let result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
-  const first = released(repo, 'npm/lib@1.1.0', 'packages/lib/CHANGELOG.md');
+  const first = released(repo, 'npm/lib@1.1.0', 'CHANGELOG.md');
   expect(first).toContain('npm:lib@1.1.0');
   expect(first).toContain('cargo:notes-core@1.1.0');
-  expect(
-    await archiveFile(
-      Buffer.from(
-        service.state().cargo['notes-core']['1.1.0'].artifact,
-        'base64',
-      ),
-      'notes-core-1.1.0/CHANGELOG.md',
-    ),
-  ).toContain('npm:lib@1.1.0');
   change(repo, 'packages/lib/index.js', 'fix: next dual package release');
   result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
-  const next = released(repo, 'npm/lib@1.1.1', 'packages/lib/CHANGELOG.md');
+  const next = released(repo, 'npm/lib@1.1.1', 'CHANGELOG.md');
   expect(next.match(/## npm:lib@1\.1\.0/g)).toHaveLength(1);
   expect(next.match(/## cargo:notes-core@1\.1\.0/g)).toHaveLength(1);
   expect(next).toContain('cargo:notes-core@1.1.1');
@@ -306,11 +286,7 @@ test('prerelease changelogs keep their own history and stable npm/Cargo releases
   change(repo, 'packages/lib/index.js', 'fix: refine preview');
   result = repo.run(options);
   expect(result.ok, result.logs).toBe(true);
-  const preview = released(
-    repo,
-    'npm/lib@1.2.0-beta.2',
-    'packages/lib/CHANGELOG.md',
-  );
+  const preview = released(repo, 'npm/lib@1.2.0-beta.2', 'CHANGELOG.md');
   expect(preview).toContain('npm:lib@1.2.0-beta.1');
   expect(preview).toContain('npm:lib@1.1.0');
   repo.git(repo.cwd, 'checkout', 'main');
@@ -318,15 +294,11 @@ test('prerelease changelogs keep their own history and stable npm/Cargo releases
   repo.git(repo.cwd, 'push', 'origin', 'main');
   result = repo.run(options);
   expect(result.ok, result.logs).toBe(true);
-  const stable = released(repo, 'npm/lib@1.2.0', 'packages/lib/CHANGELOG.md');
+  const stable = released(repo, 'npm/lib@1.2.0', 'CHANGELOG.md');
   expect(stable).toContain('npm:lib@1.1.0');
   expect(stable).toContain('preview library');
   expect(stable).not.toContain('npm:lib@1.2.0-beta');
-  const cargo = released(
-    repo,
-    'cargo/notes-core@1.2.0',
-    'crates/core/CHANGELOG.md',
-  );
+  const cargo = released(repo, 'cargo/notes-core@1.2.0', 'CHANGELOG.md');
   expect(cargo).toContain('cargo:notes-core@1.1.0');
   expect(cargo).not.toContain('cargo:notes-core@1.2.0-beta');
 });
@@ -351,12 +323,8 @@ test('native channel promotions preserve changelog snapshots without republishin
   );
   let result = repo.run(options);
   expect(result.ok, result.logs).toBe(true);
-  const before = released(repo, 'npm/lib@2.0.0', 'packages/lib/CHANGELOG.md');
-  const cargo = released(
-    repo,
-    'cargo/notes-core@2.0.0',
-    'crates/core/CHANGELOG.md',
-  );
+  const before = released(repo, 'npm/lib@2.0.0', 'CHANGELOG.md');
+  const cargo = released(repo, 'cargo/notes-core@2.0.0', 'CHANGELOG.md');
   const uploads = service.state().uploads;
   repo.git(repo.cwd, 'checkout', 'main');
   repo.git(repo.cwd, 'merge', '--ff-only', 'next');
@@ -366,12 +334,8 @@ test('native channel promotions preserve changelog snapshots without republishin
   expect(JSON.stringify(result.result)).toContain('new crate API');
   expect(JSON.stringify(result.result)).toContain('npm channel: `latest`');
   expect(service.state().uploads).toEqual(uploads);
-  expect(released(repo, 'npm/lib@2.0.0', 'packages/lib/CHANGELOG.md')).toBe(
-    before,
-  );
-  expect(
-    released(repo, 'cargo/notes-core@2.0.0', 'crates/core/CHANGELOG.md'),
-  ).toBe(cargo);
+  expect(released(repo, 'npm/lib@2.0.0', 'CHANGELOG.md')).toBe(before);
+  expect(released(repo, 'cargo/notes-core@2.0.0', 'CHANGELOG.md')).toBe(cargo);
 });
 
 test('hard termination recovers newly generated changelogs and preserves user edits before a later retry', async () => {
@@ -416,7 +380,7 @@ test('hard termination recovers newly generated changelogs and preserves user ed
     if (child.pid) process.kill(-child.pid, 'SIGKILL');
     await new Promise<void>((resolve) => child.once('exit', () => resolve()));
   }
-  const changelog = join(repo.cwd, 'packages/lib/CHANGELOG.md');
+  const changelog = join(repo.cwd, 'CHANGELOG.md');
   expect(readFileSync(changelog, 'utf8')).toContain(
     'interrupt generated changelogs',
   );
@@ -437,7 +401,7 @@ test('hard termination recovers newly generated changelogs and preserves user ed
   result = repo.run(retryOptions);
   expect(result.ok, result.logs).toBe(true);
   expect(repo.git(repo.cwd, 'status', '--porcelain')).toBe('');
-  expect(service.state().uploads).toHaveLength(2);
+  expect(service.state().uploads).toHaveLength(1);
 });
 
 test('dry runs reject ignored source changelogs that are absent from committed history', async () => {
@@ -450,7 +414,7 @@ test('dry runs reject ignored source changelogs that are absent from committed h
   repo.commit('chore: ignore local changelogs');
   change(repo, 'packages/lib/index.js', 'feat: do not release ignored files');
   writeFileSync(
-    join(repo.cwd, 'packages/lib/CHANGELOG.md'),
+    join(repo.cwd, 'CHANGELOG.md'),
     'Local content outside Git history.\n',
   );
   const refs = repo.refs();
@@ -477,104 +441,33 @@ test('reenabling changelogs retains the last generated history across releases w
   change(repo, 'packages/lib/index.js', 'fix: record releases again');
   result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
-  const text = released(repo, 'npm/lib@1.1.2', 'packages/lib/CHANGELOG.md');
+  const text = released(repo, 'npm/lib@1.1.2', 'CHANGELOG.md');
   expect(text).toContain('## npm:lib@1.1.0');
   expect(text).toContain('## npm:lib@1.1.2');
   expect(text).not.toContain('## npm:lib@1.1.1');
 });
 
-test('Cargo dependency-only releases have explicit crate requirement notes and changelogs', async () => {
-  const { repo, service, settings } = await workspace();
-  mkdirSync(join(repo.cwd, 'crates/app/src'), { recursive: true });
-  writeFileSync(
-    join(repo.cwd, 'Cargo.toml'),
-    '[workspace]\nmembers = ["crates/*"]\nresolver = "3"\n',
-  );
-  writeFileSync(
-    join(repo.cwd, 'crates/app/Cargo.toml'),
-    '[package]\nname = "notes-app"\nversion = "1.0.0"\nedition = "2024"\nlicense = "MIT"\ndescription = "Dependent changelog fixture"\n[dependencies]\nnotes-core = { path = "../core", version = "=1.0.0" }\n',
-  );
-  writeFileSync(
-    join(repo.cwd, 'crates/app/src/lib.rs'),
-    'pub fn value() -> u64 { notes_core::value() as u64 }',
-  );
-  repo.git(repo.cwd, 'add', '.');
-  repo.commit('chore: add dependent crate');
-  change(repo, 'crates/core/src/lib.rs', 'feat: coordinated crate API');
-  const result = repo.run(settings);
-  expect(result.ok, result.logs).toBe(true);
-  expect(service.state().uploads).toEqual([
-    'cargo:notes-core@1.1.0',
-    'cargo:notes-app@1.0.1',
-  ]);
-  const text = released(
-    repo,
-    'cargo/notes-app@1.0.1',
-    'crates/app/CHANGELOG.md',
-  );
-  expect(text).toContain('### Dependencies');
-  expect(text).toContain('cargo:notes-core');
-  expect(text).toContain('=1.1.0');
-  expect(text).not.toContain('coordinated crate API');
-});
-
-test('alternating ecosystem-only dependency releases preserve the entire shared-directory changelog', async () => {
+test('independent npm and Cargo releases retain unchanged members in the root history', async () => {
   const { repo, settings } = await workspace();
-  writeFileSync(
-    join(repo.cwd, 'Cargo.toml'),
-    '[workspace]\nmembers = ["packages/lib", "crates/dep"]\nresolver = "3"\n',
-  );
-  mkdirSync(join(repo.cwd, 'packages/lib/src'));
-  mkdirSync(join(repo.cwd, 'crates/dep/src'), { recursive: true });
-  writeFileSync(
-    join(repo.cwd, 'packages/lib/src/lib.rs'),
-    'pub fn value() -> u8 { 1 }',
-  );
-  writeFileSync(
-    join(repo.cwd, 'packages/lib/Cargo.toml'),
-    `${readFileSync(join(repo.cwd, 'crates/core/Cargo.toml'), 'utf8')}[dependencies]\nexternal-core = { path = "../../crates/dep", version = "=1.0.0" }\n`,
-  );
-  writeFileSync(
-    join(repo.cwd, 'crates/dep/Cargo.toml'),
-    '[package]\nname = "external-core"\nversion = "1.0.0"\nedition = "2024"\nlicense = "MIT"\ndescription = "Shared history dependency"\n',
-  );
-  writeFileSync(
-    join(repo.cwd, 'crates/dep/src/lib.rs'),
-    'pub fn value() -> u8 { 1 }',
-  );
-  writeFileSync(
-    join(repo.cwd, 'packages/lib/package.json'),
-    JSON.stringify({
-      name: 'lib',
-      version: '1.0.0',
-      dependencies: { app: '1.0.0' },
-    }),
-  );
-  repo.git(repo.cwd, 'add', '.');
-  repo.commit('chore: shared dependency graphs');
-  change(repo, 'crates/dep/src/lib.rs', 'feat: initial external crate');
-  let result = repo.run(settings);
+  change(repo, 'packages/lib/index.js', 'feat: first npm release');
+  expect(repo.run(settings).ok).toBe(true);
+  change(repo, 'crates/core/src/lib.rs', 'feat: independent Cargo release');
+  let result = repo.run(settings, repo.clone());
   expect(result.ok, result.logs).toBe(true);
-  change(repo, 'packages/lib/index.js', 'feat: shared package API');
+  const cargo = released(repo, 'cargo/notes-core@1.1.0', 'CHANGELOG.md');
+  expect(cargo).toContain('## npm:lib@1.1.0');
+  expect(cargo).toContain('## cargo:notes-core@1.1.0');
+  change(repo, 'packages/lib/index.js', 'fix: later npm release');
   result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
-  change(repo, 'crates/dep/src/lib.rs', 'fix: cargo-only coordinated release');
-  result = repo.run(settings);
-  expect(result.ok, result.logs).toBe(true);
-  expect(
-    released(repo, 'cargo/notes-core@1.1.1', 'packages/lib/CHANGELOG.md'),
-  ).toContain('## npm:lib@1.1.0');
-  change(repo, 'packages/app/index.js', 'fix: npm-only coordinated release');
-  result = repo.run(settings);
-  expect(result.ok, result.logs).toBe(true);
-  const text = released(repo, 'npm/lib@1.1.1', 'packages/lib/CHANGELOG.md');
-  expect(text).toContain('## cargo:notes-core@1.1.1');
+  const text = released(repo, 'npm/lib@1.1.1', 'CHANGELOG.md');
   expect(text.match(/## npm:lib@1\.1\.0/g)).toHaveLength(1);
+  expect(text.match(/## cargo:notes-core@1\.1\.0/g)).toHaveLength(1);
 });
 
 test('non-UTF-8 changelogs fail before publication or source-byte changes', async () => {
   const { repo, service, settings } = await workspace();
-  const file = join(repo.cwd, 'packages/lib/CHANGELOG.md');
+  const file = join(repo.cwd, 'CHANGELOG.md');
   const bytes = Buffer.from([0x43, 0x61, 0x66, 0xe9, 0x0a]);
   writeFileSync(file, bytes);
   repo.git(repo.cwd, 'add', '.');
@@ -589,4 +482,68 @@ test('non-UTF-8 changelogs fail before publication or source-byte changes', asyn
     expect(repo.refs()).toBe(refs);
     expect(service.state().uploads).toEqual([]);
   }
+});
+
+test('the root changelog contains released public members only', async () => {
+  const { repo } = await workspace();
+  writeFileSync(
+    join(repo.cwd, 'packages/app/package.json'),
+    JSON.stringify({ name: 'app', version: '1.0.0', private: true }),
+  );
+  repo.git(repo.cwd, 'add', '.');
+  repo.commit('fix: update private application');
+  change(repo, 'packages/lib/index.js', 'feat: public library');
+  const result = repo.run({ pluginConfig: { changelog: true } });
+  expect(result.ok, result.logs).toBe(true);
+  const changes = repo.state().planning.releaseNotes.changelogs;
+  expect(changes).toHaveLength(1);
+  expect(changes[0].path).toBe('CHANGELOG.md');
+  expect(changes[0].after).toContain('## npm:lib@1.1.0');
+  expect(changes[0].after).not.toContain('npm:app@');
+  expect(changes[0].after).not.toContain('cargo:notes-core@');
+});
+
+test('merging independent branch histories retains a shared committed root preface only once', async () => {
+  const { repo, settings } = await workspace();
+  change(repo, 'packages/lib/index.js', 'feat: establish coordinator history');
+  expect(
+    repo.run({
+      ...settings,
+      pluginConfig: { ...settings.pluginConfig, changelog: false },
+    }).ok,
+  ).toBe(true);
+  writeFileSync(
+    join(repo.cwd, 'CHANGELOG.md'),
+    '# Changelog\n\n## Earlier history\n\nMaintainer-authored release history.\n',
+  );
+  repo.git(repo.cwd, 'add', '.');
+  repo.commit('chore: retain existing root history');
+  repo.git(repo.cwd, 'branch', 'next');
+  repo.git(repo.cwd, 'push', 'origin', 'next');
+  const options = { ...settings, branches: ['main', 'next'] };
+  change(repo, 'packages/lib/index.js', 'feat: independent main library');
+  let result = repo.run(options);
+  expect(result.ok, result.logs).toBe(true);
+  repo.git(repo.cwd, 'checkout', 'next');
+  change(
+    repo,
+    'crates/core/src/lib.rs',
+    'feat: independent next crate\n\nBREAKING CHANGE: new crate API',
+  );
+  result = repo.run(options);
+  expect(result.ok, result.logs).toBe(true);
+  repo.git(repo.cwd, 'checkout', 'main');
+  repo.git(repo.cwd, 'merge', '--no-edit', 'next');
+  repo.git(repo.cwd, 'push', 'origin', 'main');
+  result = repo.run(options);
+  expect(result.ok, result.logs).toBe(true);
+  change(repo, 'packages/lib/index.js', 'fix: release after histories merge');
+  result = repo.run(options, repo.clone());
+  expect(result.ok, result.logs).toBe(true);
+  const text = released(repo, 'npm/lib@1.2.1', 'CHANGELOG.md');
+  expect(text).toContain('independent main library');
+  expect(text).toContain('independent next crate');
+  expect(text.match(/Maintainer-authored release history\./g)).toHaveLength(1);
+  expect(text.match(/## npm:lib@1\.2\.0/g)).toHaveLength(1);
+  expect(text.match(/## cargo:notes-core@2\.0\.0/g)).toHaveLength(1);
 });

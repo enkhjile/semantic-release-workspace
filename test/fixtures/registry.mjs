@@ -81,7 +81,11 @@ const handler = async (req, res) => {
       exp: Math.floor(Date.now() / 1000) + 300,
     };
     const value = `${Buffer.from(JSON.stringify({ alg: 'RS256' })).toString('base64url')}.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.fixture-signature`;
-    return json({ value });
+    return json({
+      value: Object.hasOwn(trusted, 'identityValue')
+        ? trusted.identityValue
+        : value,
+    });
   }
   if (trusted && path.startsWith('/-/npm/v1/oidc/token/exchange/package/')) {
     if (trusted.rejectExchange)
@@ -98,14 +102,20 @@ const handler = async (req, res) => {
     state.exchanges ??= [];
     state.exchanges.push({ name, token });
     writeFileSync(stateFile, JSON.stringify(state));
+    const created = Date.now();
+    const expires =
+      created + (trusted.expiresInMs ?? (trusted.expired ? -1000 : 3600000));
     return json(
       {
         token_type: 'oidc',
         token,
-        created: new Date().toISOString(),
-        expires: new Date(
-          Date.now() + (trusted.expired ? -1000 : 3600000),
-        ).toISOString(),
+        created: trusted.numericDates
+          ? Math.floor(created / 1000)
+          : new Date(created).toISOString(),
+        expires: trusted.numericDates
+          ? Math.floor(expires / 1000)
+          : new Date(expires).toISOString(),
+        ...(trusted.exchangeResponse ?? {}),
       },
       201,
     );
@@ -150,10 +160,19 @@ const handler = async (req, res) => {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const { jwt } = JSON.parse(Buffer.concat(chunks));
-    const claims = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url'));
+    let claims;
+    try {
+      claims = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url'));
+    } catch {
+      return json({}, 401);
+    }
     const audience = `${base.replace(/^https?:\/\//, '')}/cargo`;
     if (
-      claims.aud !== audience ||
+      (!cargoTrusted.permissiveAudience &&
+        !(
+          claims?.aud === audience ||
+          (Array.isArray(claims?.aud) && claims.aud.includes(audience))
+        )) ||
       req.headers.authorization ||
       !req.headers['user-agent']?.includes('semantic-release-workspace')
     )
@@ -363,6 +382,19 @@ const handler = async (req, res) => {
   const name = path.slice(1);
   const versions = state.npm[name];
   if (!versions) return json({ error: 'not found' }, 404);
+  // Accept the upload immediately while delaying only public version metadata.
+  // Count subsequent package reads so tests exercise real polling and retries.
+  if (controlValue === 'hide-npm' || controlValue.startsWith('hide-npm:')) {
+    state.npmVisibilityReads ??= {};
+    const reads = (state.npmVisibilityReads[name] ?? 0) + 1;
+    state.npmVisibilityReads[name] = reads;
+    writeFileSync(stateFile, JSON.stringify(state));
+    if (
+      controlValue === 'hide-npm' ||
+      reads <= Number(controlValue.slice('hide-npm:'.length))
+    )
+      return json({ name, 'dist-tags': {}, versions: {} });
+  }
   return json({
     name,
     'dist-tags': state.npmTags[name],
@@ -387,6 +419,10 @@ const server = secure
       handler,
     )
   : createServer(handler);
+// A lifecycle can spend more than Node's five-second default between
+// verification requests. Keep the fixture's client sockets valid for a test.
+server.keepAliveTimeout = 120_000;
+server.headersTimeout = 121_000;
 server.listen(0, '127.0.0.1', () => {
   base = `${secure ? 'https' : 'http'}://127.0.0.1:${server.address().port}`;
   process.send(base);
