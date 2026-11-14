@@ -2,18 +2,14 @@ name: Verify and release
 
 on:
   pull_request:
-    paths-ignore:
+    paths-ignore: &docs-paths
       - README.md
       - CONTRIBUTING.md
       - AGENTS.md
       - "docs/**/*.md"
   push:
     branches: [main, alpha]
-    paths-ignore:
-      - README.md
-      - CONTRIBUTING.md
-      - AGENTS.md
-      - "docs/**/*.md"
+    paths-ignore: *docs-paths
   workflow_dispatch:
 
 permissions:

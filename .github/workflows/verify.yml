@@ -11,7 +11,7 @@ jobs:
     name: Fast checks (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
     strategy:
-      matrix:
+      matrix: &node-matrix
         include:
           - node: project
             # Empty lets pnpm/setup read devEngines.runtime from package.json.
@@ -42,14 +42,7 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     strategy:
-      matrix:
-        include:
-          - node: project
-            # Empty lets pnpm/setup read devEngines.runtime from package.json.
-            runtime: ""
-          - node: minimum
-          - node: latest
-            runtime: node@latest
+      matrix: *node-matrix
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Read minimum Node.js from package.json
