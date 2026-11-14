@@ -141,6 +141,8 @@ export async function preflight(
       'Cyclic Cargo releases cannot be published. Break the cycle before releasing.',
       'EWORKSPACEDEPENDENCY',
     );
+  // Validate every staged manifest in dry-runs too, before preparing release refs.
+  await manifestChanges(context.cwd ?? process.cwd(), planning.plan);
   const inventory = await discoverWorkspaces(context.cwd ?? process.cwd());
   const result: PublicationPackage[] = [];
   for (const pkg of planning.plan.packages.filter(
