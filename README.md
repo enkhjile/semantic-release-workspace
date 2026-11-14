@@ -21,8 +21,16 @@ Requirements for a consumer repository:
 - One release job at a time for the **whole repository**, including different
   branches. A concurrency group containing the branch name is insufficient.
 
-Until an npm release is available, follow the [development setup](https://github.com/enkhjile/semantic-release-workspace/blob/main/CONTRIBUTING.md#set-up-a-checkout)
-in this checkout and build a local tarball:
+Install the current prerelease in the consumer repository root:
+
+```sh
+npm install --save-dev 'semantic-release@^25.0.9' semantic-release-workspace@alpha
+```
+
+The `alpha` tag tracks prereleases. Once a stable version is published, omit
+`@alpha` to install the stable channel. To test unpublished local changes instead,
+follow the [development setup](https://github.com/enkhjile/semantic-release-workspace/blob/main/CONTRIBUTING.md#set-up-a-checkout)
+and build a local tarball:
 
 ```sh
 pnpm pack
@@ -498,7 +506,9 @@ Prereleases have package-local counters such as `1.2.0-alpha.1` and
 Stable branches exclude prerelease baselines, and merging prerelease work creates
 stable package versions. Explicit dependency requirements are preserved: upgrade
 prerelease pins to stable versions yourself before releasing the dependent on
-main. Backmerge main into alpha before starting the next prerelease cycle.
+main. Promote alpha into main and backmerge main into alpha with merge commits
+to preserve release ancestry. A backmerge with no unreleased package changes
+releases nothing; subsequent attributed commits start the next prerelease cycle.
 Different prerelease identifiers retain separate histories and artifacts.
 
 Use one identifier containing a letter or hyphen (`alpha`, `rc`, `beta-test`).
