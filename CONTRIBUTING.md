@@ -115,12 +115,19 @@ generated version changes back to `main`.
 The [GitHub Actions workflow](.github/workflows/ci.yml) verifies the minimum Node
 version from `engines.node`, the development version from `devEngines.runtime`,
 and latest stable Node. PRs (including draft PR updates) run lint, types, build, and unit tests first,
-then the full integration suite across all three Node versions. Ordinary feature
-branch pushes do not start a duplicate workflow: open a draft PR for CI feedback.
+then the full integration suite across all three Node versions. PRs changing only
+root `README.md`, `CONTRIBUTING.md`, `AGENTS.md`, or Markdown under `docs/` keep
+all fast checks but skip integration setup, Rust, tests and packing. The existing
+integration job names still report successful checks after classifying the diff.
+The comparison covers the whole PR, including deleted paths and both sides of
+renames. Empty/unknown diffs and every other path use full verification.
+Ordinary feature branch pushes do not start a duplicate workflow: open a draft PR
+for CI feedback.
 Pushes to `main` and `alpha` verify the merged commit through both job matrices
-before release; the release job runs only after all verification checks pass, and never
-for pull requests. Manual workflow runs release only on those
-branches. `main` publishes stable versions to npm's `latest` tag; `alpha`
+before release, even for docs-only pushes. Manual runs also always execute both
+full matrices. The release job runs only after all verification checks pass,
+never for pull requests, and only on those release branches. `main` publishes
+stable versions to npm's `latest` tag; `alpha`
 publishes versions such as `1.0.0-alpha.1` to `alpha` and creates GitHub prereleases.
 Merge ready alpha work into `main`; semantic-release derives the stable version
 from commits and release history. Users can install prereleases with
