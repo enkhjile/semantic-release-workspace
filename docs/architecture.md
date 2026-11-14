@@ -41,6 +41,9 @@ canonical paths. Duplicate names within an ecosystem and workspace directory
 symlinks are rejected so a package cannot acquire multiple identities or evade
 path exclusions. Private packages remain in the inventory for local dependency
 validation and ordering, but do not automatically select public dependents.
+Publication preflight validates the planned manifest edits using the same
+regular-file checks as recovery, including in dry-runs. Discovery may read an
+in-repository manifest symlink, but publication never replaces it.
 
 [Attribution](../src/attribution.ts) assigns commits by changed paths, not scopes.
 The deepest package owns a path; ecosystems sharing that directory both own it.

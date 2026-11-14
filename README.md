@@ -153,7 +153,9 @@ but receive no registry upload or package tag.
 Duplicate names fail within each ecosystem, including private packages. npm and
 Cargo may share a name. Git, package-manager caches, and generated Cargo `target`
 directories are excluded. Workspace directory symlinks and symlinked ancestors
-are rejected; manifest symlinks must stay inside the repository.
+are rejected. Discovery can read manifest symlinks inside the repository, but
+publication requires regular manifest files, including private and unchanged
+members staged for packaging. Publication dry-runs check this requirement.
 
 ## Package versions and dependencies
 

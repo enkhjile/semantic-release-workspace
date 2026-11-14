@@ -165,7 +165,12 @@ export async function manifestChanges(
     [...edits]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(async ([path, changes]) => {
-        const before = await readFile(join(root, path), 'utf8');
+        const before = await readReleaseFile(root, path);
+        if (before === null)
+          throw new SemanticReleaseError(
+            `Release manifest is missing: ${path}.`,
+            'EWORKSPACEMANIFEST',
+          );
         return { path, before, after: editManifest(path, before, changes) };
       }),
   );
