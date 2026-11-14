@@ -114,15 +114,23 @@ The checkout version is a development placeholder: publishing writes release
 versions and records them in tags and GitHub release notes, without committing
 generated version changes back to `main`.
 
-The [GitHub Actions workflow](.github/workflows/ci.yml) verifies the minimum Node
-version from `engines.node`, the development version from `devEngines.runtime`,
-and latest stable Node. PRs (including draft PR updates) run lint, types, build, and unit tests first,
-then the full integration suite across all three Node versions. Ordinary feature
-branch pushes do not start a duplicate workflow: open a draft PR for CI feedback.
-Pushes to `main` and `alpha` verify the merged commit through both job matrices
-before release; the release job runs only after all verification checks pass, and never
-for pull requests. Manual workflow runs release only on those
-branches. `main` publishes stable versions to npm's `latest` tag; `alpha`
+The [CI workflow](.github/workflows/ci.yml) uses native path filters to skip PRs
+and `main`/`alpha` pushes changing only root `README.md`, `CONTRIBUTING.md`,
+`AGENTS.md`, or Markdown under `docs/`. Mixed code/docs changes run CI.
+[Full verification](.github/workflows/verify.yml) runs lint, types, build, unit
+tests, all integration tests and packaging on minimum, project and latest stable
+Node. Manual runs always perform full verification. Ordinary feature branch
+pushes do not duplicate PR runs; open a draft PR for feedback.
+
+Publishing stays in `ci.yml` to preserve its npm trusted-publisher identity.
+Release jobs require successful full verification on the merged commit and are
+serialized without cancelling an in-flight publication. PRs never publish.
+Docs-only changes start no tests or release attempt. Do not make this
+path-filtered workflow a required branch-protection check: a skipped workflow
+can leave the required check pending. Revisit that policy if mandatory PR checks
+are introduced.
+`main` publishes
+stable versions to npm's `latest` tag; `alpha`
 publishes versions such as `1.0.0-alpha.1` to `alpha` and creates GitHub prereleases.
 Promote ready `alpha` work into `main` with a merge commit, then backmerge `main`
 into `alpha` with a merge commit before the next prerelease cycle. Preserve the

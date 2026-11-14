@@ -2,8 +2,18 @@ name: Verify and release
 
 on:
   pull_request:
+    paths-ignore:
+      - README.md
+      - CONTRIBUTING.md
+      - AGENTS.md
+      - "docs/**/*.md"
   push:
     branches: [main, alpha]
+    paths-ignore:
+      - README.md
+      - CONTRIBUTING.md
+      - AGENTS.md
+      - "docs/**/*.md"
   workflow_dispatch:
 
 permissions:
@@ -15,74 +25,17 @@ concurrency:
 
 jobs:
   verify:
-    name: Fast checks (Node ${{ matrix.node }})
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - node: project
-            # Empty lets pnpm/setup read devEngines.runtime from package.json.
-            runtime: ""
-          - node: minimum
-          - node: latest
-            runtime: node@latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Read minimum Node.js from package.json
-        if: matrix.node == 'minimum'
-        id: minimum
-        run: |
-          echo "runtime=node@$(jq -r '.engines.node | ltrimstr(">=")' package.json)" >> "$GITHUB_OUTPUT"
-      - name: Set up Node.js, pnpm, and dependencies
-        uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
-        with:
-          runtime: ${{ steps.minimum.outputs.runtime || matrix.runtime }}
-          cache: true
-          require-lockfile: true
-      - run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm build
-      - run: pnpm test:unit
-
-  integration:
-    name: Verify (Node ${{ matrix.node }})
-    needs: verify
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - node: project
-            # Empty lets pnpm/setup read devEngines.runtime from package.json.
-            runtime: ""
-          - node: minimum
-          - node: latest
-            runtime: node@latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Read minimum Node.js from package.json
-        if: matrix.node == 'minimum'
-        id: minimum
-        run: |
-          echo "runtime=node@$(jq -r '.engines.node | ltrimstr(">=")' package.json)" >> "$GITHUB_OUTPUT"
-      - name: Set up Node.js, pnpm, and dependencies
-        uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
-        with:
-          runtime: ${{ steps.minimum.outputs.runtime || matrix.runtime }}
-          cache: true
-          require-lockfile: true
-      - name: Install stable Rust for Cargo integration tests
-        run: |
-          rustup toolchain install stable --profile minimal --no-self-update
-          rustup default stable
-      - run: pnpm test:integration
-      - run: pnpm pack
+    uses: ./.github/workflows/verify.yml
 
   release:
-    needs: [verify, integration]
+    needs: verify
     if: >-
       github.event_name != 'pull_request' &&
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/alpha')
     runs-on: ubuntu-latest
+    concurrency:
+      group: npm-release
+      cancel-in-progress: false
     permissions:
       contents: write
       id-token: write
