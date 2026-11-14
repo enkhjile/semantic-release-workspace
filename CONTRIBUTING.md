@@ -22,7 +22,8 @@ Install pnpm using its [installation guide](https://pnpm.io/installation).
 Installation downloads the declared Node runtime when needed, and project scripts
 use it automatically. Commit `pnpm-lock.yaml` with dependency changes.
 
-The full test suite also needs Git, npm, OpenSSL, and stable Rust with Cargo on
+The full test suite also needs Git, npm, OpenSSL, Python 3 (for documentation
+checks), and stable Rust with Cargo on
 `PATH`. CI installs stable Rust before testing; local Cargo tests need the same
 toolchain. See the [Rust installation guide](https://www.rust-lang.org/tools/install).
 
