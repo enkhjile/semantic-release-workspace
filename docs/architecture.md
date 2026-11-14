@@ -39,7 +39,8 @@ without invoking package managers, installing dependencies or creating lockfiles
 It produces a deterministic inventory with ecosystem-qualified identities and
 canonical paths. Duplicate names within an ecosystem and workspace directory
 symlinks are rejected so a package cannot acquire multiple identities or evade
-path exclusions. Private packages remain because they affect public dependents.
+path exclusions. Private packages remain in the inventory for local dependency
+validation and ordering, but do not automatically select public dependents.
 
 [Attribution](../src/attribution.ts) assigns commits by changed paths, not scopes.
 The deepest package owns a path; ecosystems sharing that directory both own it.
@@ -67,8 +68,9 @@ must be completed with the version that created them before migration.
 ## Source, prepared commits and artifacts have different roles
 
 [Manifest editing](../src/manifests.ts) and [release IO](../src/release-io.ts)
-construct a detached prepared commit containing released versions, dependency
-edits and optional changelogs. Package tags point there while the source branch
+construct a detached prepared commit containing released versions, required local
+reference edits and an optional root changelog. Explicit dependency requirements
+remain unchanged. Package tags point there while the source branch
 stays at its original commit. This preserves development history while making
 the released manifest state available through Git.
 
