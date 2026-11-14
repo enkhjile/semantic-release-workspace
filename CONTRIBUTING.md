@@ -1,5 +1,7 @@
 # Contributing
 
+[AGENTS.md](AGENTS.md) summarizes these conventions for coding agents.
+
 ## Set up a checkout
 
 Fork [semantic-release-workspace](https://github.com/enkhjile/semantic-release-workspace),
@@ -40,13 +42,13 @@ toolchain. See the [Rust installation guide](https://www.rust-lang.org/tools/ins
 | `pnpm typecheck`        | Run strict TypeScript checks without emitting files.       |
 | `pnpm pack`             | Build and create a publishable tarball for inspection.     |
 
-For a focused test run, build first because integration tests import the public
-package from `dist/`, then call Vitest directly:
+For focused runs, select the project and file explicitly. Unit tests need no
+build; integration tests load the public package from `dist/`:
 
 ```sh
+pnpm exec vitest run --project unit test/coordination.test.ts --maxWorkers=4
 pnpm build
-pnpm exec vitest run test/coordination.test.ts --maxWorkers=4
-pnpm exec vitest run test/publication.test.ts --maxWorkers=4 -t 'dry run'
+pnpm exec vitest run --project integration test/publication.test.ts --maxWorkers=4 -t 'dry run'
 ```
 
 Vitest projects in `vitest.config.ts` partition the suite without moving or
@@ -130,8 +132,12 @@ are introduced.
 `main` publishes
 stable versions to npm's `latest` tag; `alpha`
 publishes versions such as `1.0.0-alpha.1` to `alpha` and creates GitHub prereleases.
-Merge ready alpha work into `main`; semantic-release derives the stable version
-from commits and release history. Users can install prereleases with
+Promote ready `alpha` work into `main` with a merge commit, then backmerge `main`
+into `alpha` with a merge commit before the next prerelease cycle. Preserve the
+ancestry of these long-lived branches rather than squashing their promotion or
+backmerge. semantic-release derives versions from commits and release history;
+a backmerge containing no unreleased changes does not request another release.
+Users can install prereleases with
 `npm install semantic-release-workspace@alpha`.
 
 The npm CLI is pinned as a direct development dependency so semantic-release
@@ -165,18 +171,22 @@ and can contact external services. Maintainers should use it before a
 release-triggering push. `pnpm release` can publish packages, push tags, and create
 GitHub releases; neither release command is a routine contributor check.
 
-## Historical toolchain and audit notes
+## Dependency review and cleanup
 
-The following records the **2026-10-23 snapshot**, not a fresh dependency audit.
-Development tools were selected as exact stable releases. npm runtime clients
-were kept on releases supporting the Node 24.0 floor; their newer majors then
-required Node 24.15 or newer. Node typings stayed on Node 24 to avoid newer APIs.
-tsdown warned that its TypeScript 7 API integration was experimental, while the
-compiler itself was stable; build and declaration output were verified then.
+Run `pnpm audit` when reviewing dependencies and before a release. Check current
+advisories and affected dependency paths; an old clean audit is not evidence for
+the current lockfile. Report unresolved findings and assess compatible fixes
+without weakening the supported Node range or bypassing integration tests.
 
-At that review, [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
-affected transitive `braces` used by semantic-release and fast-glob, and no patched
-version was available. Cargo discovery disabled brace expansion; the remaining
-semantic-release path accepted repository-controlled configuration. The finding
-was deferred pending a compatible fix, with review due before publishing or by
-2026-11-23, whichever came first. Reassess current advisories before publishing.
+Routine verification uses local fixtures, not public test publications. Live
+registry tests and destructive remote cleanup require explicit authorization;
+keep to any agreed repositories, versions and upload limits. Retry unfinished
+releases with their original source, configuration and retained artifacts. Never
+delete journals or rewrite tags to bypass a pending batch; see
+[recovery and backups](README.md#recovery-and-backups).
+
+After verification, stop local fixture servers and remove temporary clones,
+downloaded archives, `pnpm pack` tarballs and task-created Cargo targets. Keep
+compact evidence needed to explain results. Preserve user files, shared caches,
+active worktrees and release-state refs; do not run broad cleanup commands against
+other work or treat public package versions as disposable files.
