@@ -28,15 +28,17 @@ toolchain. See the [Rust installation guide](https://www.rust-lang.org/tools/ins
 
 ## Development commands
 
-| Command          | Purpose                                                    |
-| ---------------- | ---------------------------------------------------------- |
-| `pnpm check`     | Run lint, strict type checking, then the build and tests.  |
-| `pnpm test`      | Build, then run the test suite with four workers.          |
-| `pnpm build`     | Compile the ESM entry point and declarations into `dist/`. |
-| `pnpm lint`      | Check formatting and lint rules with Biome.                |
-| `pnpm format`    | Apply formatting and safe lint fixes; review the result.   |
-| `pnpm typecheck` | Run strict TypeScript checks without emitting files.       |
-| `pnpm pack`      | Build and create a publishable tarball for inspection.     |
+| Command                 | Purpose                                                    |
+| ----------------------- | ---------------------------------------------------------- |
+| `pnpm check`            | Run lint, strict type checking, then the build and tests.  |
+| `pnpm test`             | Build, then run both test projects with four workers.      |
+| `pnpm test:unit`        | Run in-memory unit tests without building or Rust.         |
+| `pnpm test:integration` | Build, then run all integration tests.                     |
+| `pnpm build`            | Compile the ESM entry point and declarations into `dist/`. |
+| `pnpm lint`             | Check formatting and lint rules with Biome.                |
+| `pnpm format`           | Apply formatting and safe lint fixes; review the result.   |
+| `pnpm typecheck`        | Run strict TypeScript checks without emitting files.       |
+| `pnpm pack`             | Build and create a publishable tarball for inspection.     |
 
 For a focused test run, build first because integration tests import the public
 package from `dist/`, then call Vitest directly:
@@ -46,6 +48,13 @@ pnpm build
 pnpm exec vitest run test/coordination.test.ts --maxWorkers=4
 pnpm exec vitest run test/publication.test.ts --maxWorkers=4 -t 'dry run'
 ```
+
+Vitest projects in `vitest.config.ts` partition the suite without moving or
+changing tests. Unit tests are pure in-memory coordination and manifest editing.
+Tests using filesystem fixtures, Git, native packaging, or local servers belong
+to integration. New test files default to integration so they cannot silently
+fall outside CI; add genuinely pure files to the unit list when appropriate.
+Use `--project unit` or `--project integration` to select a suite.
 
 Use Vitest's file arguments and `-t` name filter. Do not use `pnpm test --filter`
 to select tests: `pnpm test` runs a compound build-and-test script. Keep the
@@ -101,8 +110,11 @@ generated version changes back to `main`.
 
 The [GitHub Actions workflow](.github/workflows/ci.yml) verifies the minimum Node
 version from `engines.node`, the development version from `devEngines.runtime`,
-and latest stable Node. Pushes to `main` and `alpha` trigger verification and
-release; the release job runs only after all verification checks pass, and never
+and latest stable Node. PRs (including draft PR updates) run lint, types, build, and unit tests first,
+then the full integration suite across all three Node versions. Ordinary feature
+branch pushes do not start a duplicate workflow: open a draft PR for CI feedback.
+Pushes to `main` and `alpha` verify the merged commit through both job matrices
+before release; the release job runs only after all verification checks pass, and never
 for pull requests. Manual workflow runs release only on those
 branches. `main` publishes stable versions to npm's `latest` tag; `alpha`
 publishes versions such as `1.0.0-alpha.1` to `alpha` and creates GitHub prereleases.

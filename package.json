@@ -32,8 +32,10 @@
     "prepack": "pnpm build",
     "release": "semantic-release",
     "release:dry-run": "semantic-release --dry-run",
-    "test": "pnpm build && vitest run --maxWorkers=4",
-    "typecheck": "tsc --noEmit"
+    "test": "pnpm build && vitest run",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "pnpm build && vitest run --project integration"
   },
   "dependencies": {
     "@npmcli/agent": "4.0.2",
