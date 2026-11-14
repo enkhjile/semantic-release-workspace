@@ -22,8 +22,7 @@ Install pnpm using its [installation guide](https://pnpm.io/installation).
 Installation downloads the declared Node runtime when needed, and project scripts
 use it automatically. Commit `pnpm-lock.yaml` with dependency changes.
 
-The full test suite also needs Git, npm, OpenSSL, Python 3 (for documentation
-checks), and stable Rust with Cargo on
+The full test suite also needs Git, npm, OpenSSL, and stable Rust with Cargo on
 `PATH`. CI installs stable Rust before testing; local Cargo tests need the same
 toolchain. See the [Rust installation guide](https://www.rust-lang.org/tools/install).
 
@@ -113,21 +112,21 @@ The checkout version is a development placeholder: publishing writes release
 versions and records them in tags and GitHub release notes, without committing
 generated version changes back to `main`.
 
-The [CI workflow](.github/workflows/ci.yml) classifies the whole PR diff or
-push range once. Changes limited to root `README.md`, `CONTRIBUTING.md`,
-`AGENTS.md`, and Markdown under `docs/` run whitespace and local-file link checks
-without installing dependencies, running tests, or attempting a release.
-Every other path, an empty comparison, or a failed comparison selects
-[full verification](.github/workflows/verify.yml): lint, types, build, unit tests,
-integration tests and packaging on minimum, project and latest stable Node.
-Manual runs always select full verification. Ordinary feature branch pushes do
-not duplicate PR runs; open a draft PR for feedback.
+The [CI workflow](.github/workflows/ci.yml) uses native path filters to skip PRs
+and `main`/`alpha` pushes changing only root `README.md`, `CONTRIBUTING.md`,
+`AGENTS.md`, or Markdown under `docs/`. Mixed code/docs changes run CI.
+[Full verification](.github/workflows/verify.yml) runs lint, types, build, unit
+tests, all integration tests and packaging on minimum, project and latest stable
+Node. Manual runs always perform full verification. Ordinary feature branch
+pushes do not duplicate PR runs; open a draft PR for feedback.
 
-The always-running **CI result** gate requires the selected checks to succeed;
-configure that check as required in branch protection. Release jobs require both
-this gate and the full matrix to pass on the merged commit. Publishing stays in
-`ci.yml` to preserve its npm trusted-publisher identity, and release jobs are
+Publishing stays in `ci.yml` to preserve its npm trusted-publisher identity.
+Release jobs require successful full verification on the merged commit and are
 serialized without cancelling an in-flight publication. PRs never publish.
+Docs-only changes start no tests or release attempt. Do not make this
+path-filtered workflow a required branch-protection check: a skipped workflow
+can leave the required check pending. Revisit that policy if mandatory PR checks
+are introduced.
 `main` publishes
 stable versions to npm's `latest` tag; `alpha`
 publishes versions such as `1.0.0-alpha.1` to `alpha` and creates GitHub prereleases.

@@ -2,8 +2,18 @@ name: Verify and release
 
 on:
   pull_request:
+    paths-ignore:
+      - README.md
+      - CONTRIBUTING.md
+      - AGENTS.md
+      - "docs/**/*.md"
   push:
     branches: [main, alpha]
+    paths-ignore:
+      - README.md
+      - CONTRIBUTING.md
+      - AGENTS.md
+      - "docs/**/*.md"
   workflow_dispatch:
 
 permissions:
@@ -14,86 +24,12 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  changes:
-    name: Classify changes
-    runs-on: ubuntu-latest
-    outputs:
-      full: ${{ steps.changes.outputs.full }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - id: changes
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        shell: bash
-        run: |
-          case "$EVENT_NAME" in
-            pull_request) comparison="$BASE_SHA...$HEAD_SHA" ;;
-            push) comparison="$BASE_SHA..$HEAD_SHA" ;;
-            *) echo "full=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
-          esac
-          # Fail closed; deleted code and both sides of renames remain visible.
-          if ! git diff --no-renames --name-only -z "$comparison" -- > "$RUNNER_TEMP/changed-paths"; then
-            echo "full=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [[ ! -s "$RUNNER_TEMP/changed-paths" ]]; then
-            echo "full=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          while IFS= read -r -d '' path; do
-            case "$path" in
-              README.md|CONTRIBUTING.md|AGENTS.md|docs/*.md) ;;
-              *) echo "full=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
-            esac
-          done < "$RUNNER_TEMP/changed-paths"
-          echo "full=false" >> "$GITHUB_OUTPUT"
-
-  docs:
-    name: Documentation checks
-    needs: changes
-    if: needs.changes.outputs.full == 'false'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Check Markdown whitespace and local links
-        run: python3 scripts/check-docs.py
-
-  full:
-    name: Full verification
-    needs: changes
-    if: needs.changes.outputs.full == 'true'
+  verify:
     uses: ./.github/workflows/verify.yml
 
-  result:
-    name: CI result
-    if: always()
-    needs: [changes, docs, full]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require the selected checks to succeed
-        env:
-          CHANGES_RESULT: ${{ needs.changes.result }}
-          FULL_REQUIRED: ${{ needs.changes.outputs.full }}
-          DOCS_RESULT: ${{ needs.docs.result }}
-          FULL_RESULT: ${{ needs.full.result }}
-        run: |
-          [[ "$CHANGES_RESULT" == success ]] || exit 1
-          case "$FULL_REQUIRED" in
-            true) [[ "$FULL_RESULT" == success ]] ;;
-            false) [[ "$DOCS_RESULT" == success ]] ;;
-            *) exit 1 ;;
-          esac
-
   release:
-    needs: [changes, full, result]
+    needs: verify
     if: >-
-      needs.changes.outputs.full == 'true' &&
-      needs.full.result == 'success' &&
-      needs.result.result == 'success' &&
       github.event_name != 'pull_request' &&
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/alpha')
     runs-on: ubuntu-latest
