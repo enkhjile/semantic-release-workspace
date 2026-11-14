@@ -29,7 +29,7 @@ async function setup(dependents = false) {
     mkdirSync(join(repo.cwd, `crates/${name}/src`), { recursive: true });
     writeFileSync(
       join(repo.cwd, `crates/${name}/Cargo.toml`),
-      `[package]\nname = "trusted-${name}"\nversion = "1.0.0"\nedition = "2024"\nlicense = "MIT"\ndescription = "OIDC fixture"\npublish = ["fixture"]\n${name === 'app' ? '[dependencies]\ntrusted-core = {path = "../core", version = "=1.0.0"}\n' : ''}`,
+      `[package]\nname = "trusted-${name}"\nversion = "1.0.0"\nedition = "2024"\nlicense = "MIT"\ndescription = "OIDC fixture"\npublish = ["fixture"]\n${name === 'app' ? '[dependencies]\ntrusted-core = {path = "../core", version = "=1.1.0"}\n' : ''}`,
     );
     writeFileSync(
       join(repo.cwd, `crates/${name}/src/lib.rs`),

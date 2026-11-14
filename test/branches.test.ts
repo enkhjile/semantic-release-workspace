@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
 import { registry, servers } from './fixtures/registry.js';
@@ -13,7 +13,7 @@ afterEach(() => {
 });
 const branches = ['main', { name: 'beta', prerelease: true }];
 function workspace() {
-  const repo = fixture({ synchronizeDependents: true });
+  const repo = fixture();
   writeFileSync(
     join(repo.cwd, 'package.json'),
     JSON.stringify({ private: true, workspaces: ['packages/*'] }),
@@ -52,7 +52,23 @@ function checkout(repo: ReturnType<typeof workspace>, name: string) {
   repo.git(repo.cwd, 'checkout', '-b', name);
   repo.git(repo.cwd, 'push', '-u', 'origin', name);
 }
-test('real lifecycle plans prereleases, coordinates dependents, increments counters and promotes to stable', () => {
+function upgradeCargo(
+  repo: ReturnType<typeof workspace>,
+  prefix: string,
+  version: string,
+) {
+  const path = join(repo.cwd, 'crates/app/Cargo.toml');
+  writeFileSync(
+    path,
+    readFileSync(path, 'utf8').replace(
+      /version = "=[^"]+"/,
+      `version = "=${version}"`,
+    ),
+  );
+  repo.git(repo.cwd, 'add', '.');
+  repo.commit(`fix(app): adopt ${prefix}-core ${version}`);
+}
+test('real lifecycle increments changed-package prereleases and promotes them while leaving dependents unchanged', () => {
   const repo = workspace();
   expect(repo.run().ok).toBe(true);
   checkout(repo, 'beta');
@@ -68,7 +84,7 @@ test('real lifecycle plans prereleases, coordinates dependents, increments count
     repo
       .state('beta')
       .planning.versions.map((p: { version: string }) => p.version),
-  ).toEqual(['1.1.1-beta.1', '1.2.0-beta.1']);
+  ).toEqual(['1.1.0', '1.2.0-beta.1']);
   change(repo);
   const second = repo.run({ branches });
   expect(second.ok, second.logs).toBe(true);
@@ -76,7 +92,7 @@ test('real lifecycle plans prereleases, coordinates dependents, increments count
     repo
       .state('beta')
       .planning.versions.map((p: { version: string }) => p.version),
-  ).toEqual(['1.1.1-beta.2', '1.2.0-beta.2']);
+  ).toEqual(['1.1.0', '1.2.0-beta.2']);
   const noop = repo.run({ branches });
   expect(noop.ok, noop.logs).toBe(true);
   expect(noop.result).toBe(false);
@@ -87,7 +103,7 @@ test('real lifecycle plans prereleases, coordinates dependents, increments count
   expect(stable.ok, stable.logs).toBe(true);
   expect(
     repo.state().planning.versions.map((p: { version: string }) => p.version),
-  ).toEqual(['1.1.1', '1.2.0']);
+  ).toEqual(['1.1.0', '1.2.0']);
 });
 test('fresh clone resumes a pending prerelease without reallocating versions', () => {
   const repo = workspace();
@@ -175,8 +191,8 @@ test('stable branch promotion adds npm channels for all package versions without
     next: '2.0.0',
   });
   expect(service.state().npmTags.app).toEqual({
-    latest: '1.1.2',
-    next: '1.1.2',
+    latest: '1.1.1',
+    next: '1.1.1',
   });
   expect(service.state().uploads).toEqual(uploads);
   change(repo);
@@ -206,7 +222,7 @@ test('Cargo publishes coordinated prereleases and stable promotion with native p
     );
     writeFileSync(
       join(repo.cwd, `crates/${name}/Cargo.toml`),
-      `[package]\nname = "branch-${name}"\nversion = "1.0.0"\nedition = "2024"\nlicense = "MIT"\ndescription = "Branch fixture"\n${name === 'app' ? '[dependencies]\nbranch-core = { path = "../core", version = "=1.0.0" }\n' : ''}`,
+      `[package]\nname = "branch-${name}"\nversion = "1.0.0"\nedition = "2024"\nlicense = "MIT"\ndescription = "Branch fixture"\n${name === 'app' ? '[dependencies]\nbranch-core = { path = "../core", version = "=1.1.0" }\n' : ''}`,
     );
   }
   repo.git(repo.cwd, 'add', '.');
@@ -229,6 +245,7 @@ test('Cargo publishes coordinated prereleases and stable promotion with native p
   );
   repo.git(repo.cwd, 'add', '.');
   repo.commit('feat: improve crate');
+  upgradeCargo(repo, 'branch', '1.2.0-beta.1');
   const refs = repo.refs();
   result = repo.run({ ...settings, dryRun: true });
   expect(result.ok, result.logs).toBe(true);
@@ -249,6 +266,7 @@ test('Cargo publishes coordinated prereleases and stable promotion with native p
   repo.git(repo.cwd, 'checkout', 'main');
   repo.git(repo.cwd, 'merge', '--ff-only', 'beta');
   repo.git(repo.cwd, 'push', 'origin', 'main');
+  upgradeCargo(repo, 'branch', '1.2.0');
   result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
   expect(service.state().cargo['branch-core']['1.2.0']).toBeDefined();
@@ -377,15 +395,31 @@ test('hyphenated prerelease identifiers retain counters and reject channel drift
   expect(result.ok, result.logs).toBe(true);
 });
 
-test('per-package higher-branch bounds reject a dependency bump even when the coordinator patch fits', () => {
+test('per-package higher-branch bounds reject a manual dependent upgrade even when the coordinator patch fits', () => {
   const repo = workspace();
   expect(repo.run().ok).toBe(true);
   checkout(repo, 'next');
   change(repo, 'feat: next library');
+  writeFileSync(
+    join(repo.cwd, 'packages/app/package.json'),
+    JSON.stringify({
+      name: 'app',
+      version: '1.0.0',
+      dependencies: { lib: '1.2.0' },
+    }),
+  );
+  repo.git(repo.cwd, 'add', '.');
+  repo.commit('fix(app): adopt next library');
   let result = repo.run({ branches: ['main', 'next'] });
   expect(result.ok, result.logs).toBe(true);
   repo.git(repo.cwd, 'checkout', 'main');
   change(repo);
+  writeFileSync(
+    join(repo.cwd, 'packages/app/index.js'),
+    'export const value = 4;',
+  );
+  repo.git(repo.cwd, 'add', '.');
+  repo.commit('fix(app): repair application');
   const refs = repo.refs();
   result = repo.run({ branches: ['main', 'next'], dryRun: true });
   expect(result.ok, result.logs).toBe(false);
@@ -536,7 +570,7 @@ test('dry-run rejects a package version already tagged on an unmerged branch', (
 });
 
 test('Cargo maintenance releases coordinate dependencies on the older release line', async () => {
-  const repo = fixture({ synchronizeDependents: true });
+  const repo = fixture();
   const service = await registry();
   mkdirSync(join(repo.cwd, '.cargo'));
   writeFileSync(
@@ -556,7 +590,7 @@ test('Cargo maintenance releases coordinate dependencies on the older release li
     );
     writeFileSync(
       join(repo.cwd, `crates/${name}/Cargo.toml`),
-      `[package]\nname = "line-${name}"\nversion = "1.0.0"\nedition = "2024"\nlicense = "MIT"\ndescription = "Line fixture"\n${name === 'app' ? '[dependencies]\nline-core = { path = "../core", version = "=1.0.0" }\n' : ''}`,
+      `[package]\nname = "line-${name}"\nversion = "1.0.0"\nedition = "2024"\nlicense = "MIT"\ndescription = "Line fixture"\n${name === 'app' ? '[dependencies]\nline-core = { path = "../core", version = "=1.1.0" }\n' : ''}`,
     );
   }
   repo.git(repo.cwd, 'add', '.');
@@ -577,6 +611,7 @@ test('Cargo maintenance releases coordinate dependencies on the older release li
     );
   repo.git(repo.cwd, 'add', '.');
   repo.commit('feat: new API\n\nBREAKING CHANGE: new API');
+  upgradeCargo(repo, 'line', '2.0.0');
   result = repo.run(settings);
   expect(result.ok, result.logs).toBe(true);
   repo.git(repo.cwd, 'checkout', '1.x');
@@ -586,6 +621,7 @@ test('Cargo maintenance releases coordinate dependencies on the older release li
   );
   repo.git(repo.cwd, 'add', '.');
   repo.commit('fix: backport crate');
+  upgradeCargo(repo, 'line', '1.1.1');
   const refs = repo.refs();
   const uploads = service.state().uploads;
   result = repo.run({ ...settings, dryRun: true });
@@ -727,7 +763,7 @@ test('a pending prerelease does not consume another prerelease branch counter', 
   ).toBe('1.2.0-beta.1');
 });
 
-test('completed legacy journals retain dependency projections without archived release plans', () => {
+test('completed journals retain independent versions without archived release plans', () => {
   const repo = workspace();
   expect(repo.run().ok).toBe(true);
   mkdirSync(join(repo.cwd, 'packages/tool'));
@@ -758,11 +794,11 @@ test('completed legacy journals retain dependency projections without archived r
       .state()
       .planning.plan.packages.find(
         (pkg: { id: string }) => pkg.id === 'npm:app',
-      ).nextVersion,
-  ).toBe('1.1.1');
+      ),
+  ).toMatchObject({ currentVersion: '1.1.0', nextVersion: null });
 });
 
-test('stable plans do not inherit dev dependency projections from prerelease carriers', () => {
+test('stable plans leave explicit dev dependencies unchanged across prerelease carriers', () => {
   const repo = workspace();
   writeFileSync(
     join(repo.cwd, 'packages/app/package.json'),
@@ -796,9 +832,7 @@ test('stable plans do not inherit dev dependency projections from prerelease car
     .planning.plan.packages.find(
       (pkg: { id: string }) => pkg.id === 'npm:app',
     ).dependencyUpdates;
-  expect(updates).toEqual([
-    expect.objectContaining({ field: ['devDependencies', 'lib'], to: '1.2.0' }),
-  ]);
+  expect(updates).toEqual([]);
   writeFileSync(
     join(repo.cwd, 'packages/app/index.js'),
     'export const value = 3;',

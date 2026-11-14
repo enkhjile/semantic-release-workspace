@@ -11,8 +11,8 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 
-test('npm resumes alpha releases after stable promotion and backmerge, coordinating exact dependencies', async () => {
-  const repo = fixture({ synchronizeDependents: true });
+test('npm resumes alpha releases after stable promotion and backmerge, with manual exact dependency upgrades', async () => {
+  const repo = fixture();
   const service = await registry();
   const settings = {
     branches: ['main', { name: 'alpha', prerelease: true }],
@@ -30,7 +30,7 @@ test('npm resumes alpha releases after stable promotion and backmerge, coordinat
       JSON.stringify({
         name,
         version: '1.0.0',
-        ...(name === 'app' ? { dependencies: { lib: '1.0.0' } } : {}),
+        ...(name === 'app' ? { dependencies: { lib: '1.1.0' } } : {}),
       }),
     );
     writeFileSync(
@@ -40,10 +40,20 @@ test('npm resumes alpha releases after stable promotion and backmerge, coordinat
   }
   repo.git(repo.cwd, 'add', '.');
   repo.commit('feat: add packages');
-  const manifests = ['lib', 'app'].map((name) =>
-    readFileSync(join(repo.cwd, `packages/${name}/package.json`), 'utf8'),
-  );
+  const upgrade = (lib: string) => {
+    const path = join(repo.cwd, 'packages/app/package.json');
+    const manifest = JSON.parse(readFileSync(path, 'utf8'));
+    if (manifest.dependencies.lib === lib) return;
+    manifest.dependencies.lib = lib;
+    writeFileSync(path, JSON.stringify(manifest));
+    repo.git(repo.cwd, 'add', '.');
+    repo.commit(`fix(app): adopt lib ${lib}`);
+  };
   const release = async (branch: string, lib: string, app: string) => {
+    upgrade(lib);
+    const manifests = ['lib', 'app'].map((name) =>
+      readFileSync(join(repo.cwd, `packages/${name}/package.json`), 'utf8'),
+    );
     const result = repo.run(settings);
     expect(result.ok, result.logs).toBe(true);
     expect(
@@ -117,6 +127,7 @@ test('npm resumes alpha releases after stable promotion and backmerge, coordinat
   repo.git(repo.cwd, 'push', 'origin', 'alpha');
   expect(repo.git(repo.cwd, 'rev-parse', 'HEAD')).toBe(stableHead);
   change(3, 'fix: correct library after stable release');
+  upgrade('1.2.1-alpha.1');
   const refs = repo.refs();
   const beforeDryRun = service.state();
   const dry = repo.run({ ...settings, dryRun: true });

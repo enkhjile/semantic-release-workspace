@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 function workspace() {
-  const repo = fixture({ synchronizeDependents: true });
+  const repo = fixture();
   return {
     ...repo,
     file(path: string, content: string) {
@@ -35,7 +35,7 @@ function workspace() {
   };
 }
 
-test('moved npm packages retain published dependency ranges through dry runs and fresh-clone retries until explicitly edited', async () => {
+test('moved npm packages retain explicit dependency ranges through dry runs and fresh-clone retries until explicitly edited', async () => {
   const repo = workspace();
   const service = await registry();
   const settings = {
@@ -63,6 +63,11 @@ test('moved npm packages retain published dependency ranges through dry runs and
   repo.change('chore: set up packages');
   repo.file('packages/lib/index.js', 'export const replacement = 2;\n');
   repo.change('feat: replace library API\n\nBREAKING CHANGE: replace API');
+  repo.file(
+    'packages/app/package.json',
+    '{"name":"app","version":"1.0.0","dependencies":{"lib":"2.0.0"}}',
+  );
+  repo.change('fix(app): adopt library 2.0.0');
   const first = repo.run(settings);
   expect(first.ok, first.logs).toBe(true);
   expect((await publishedManifest('1.0.1')).dependencies.lib).toBe('2.0.0');
@@ -121,7 +126,7 @@ test('moved npm packages retain published dependency ranges through dry runs and
   expect((await publishedManifest('1.0.3')).dependencies.lib).toBe('^1.0.0');
 });
 
-test('moving a Cargo package to the workspace root retains its own and shared dependency ranges in the published crate', async () => {
+test('moving a Cargo package to the workspace root retains its own and shared explicit dependency ranges in the published crate', async () => {
   const repo = workspace();
   const service = await registry();
   const settings = {
@@ -131,7 +136,7 @@ test('moving a Cargo package to the workspace root retains its own and shared de
   const packageSection =
     '[package]\nname = "relocated-app"\nversion = "1.0.0"\nedition = "2024"\npublish = ["fixture"]\nlicense = "MIT"\ndescription = "fixture"\n';
   const shared =
-    '[workspace.dependencies]\nshared = { package = "shared-lib", path = "crates/shared", version = "=1.0.0", registry = "fixture" }\n';
+    '[workspace.dependencies]\nshared = { package = "shared-lib", path = "crates/shared", version = "=2.0.0", registry = "fixture" }\n';
   repo.file(
     '.cargo/config.toml',
     `[registries.fixture]\nindex = "sparse+${service.url}/cargo/index/"\n`,
@@ -142,7 +147,7 @@ test('moving a Cargo package to the workspace root retains its own and shared de
   );
   repo.file(
     'crates/app/Cargo.toml',
-    `${packageSection}[dependencies]\nlocal = { package = "local-lib", path = "../local", version = "=1.0.0", registry = "fixture" }\nshared.workspace = true\n`,
+    `${packageSection}[dependencies]\nlocal = { package = "local-lib", path = "../local", version = "=2.0.0", registry = "fixture" }\nshared.workspace = true\n`,
   );
   repo.file(
     'crates/app/src/lib.rs',
@@ -159,6 +164,11 @@ test('moving a Cargo package to the workspace root retains its own and shared de
   for (const name of ['local', 'shared'])
     repo.file(`crates/${name}/src/lib.rs`, 'pub fn value() -> u32 { 2 }\n');
   repo.change('feat: replace library APIs\n\nBREAKING CHANGE: replace APIs');
+  repo.file(
+    'crates/app/src/lib.rs',
+    'pub fn app() -> u32 { local::value() + shared::value() } // Adopt 2.0 APIs\n',
+  );
+  repo.change('fix(app): adopt library APIs');
   const first = repo.run(settings);
   expect(first.ok, first.logs).toBe(true);
   expect(service.state().uploads).toEqual([
@@ -171,7 +181,7 @@ test('moving a Cargo package to the workspace root retains its own and shared de
   rmSync(join(repo.cwd, 'crates/app'), { recursive: true });
   repo.file(
     'Cargo.toml',
-    `[workspace]\nmembers = ["crates/*"]\nresolver = "3"\n${shared}${packageSection}[dependencies]\nlocal = { package = "local-lib", path = "crates/local", version = "=1.0.0", registry = "fixture" }\nshared.workspace = true\n`,
+    `[workspace]\nmembers = ["crates/*"]\nresolver = "3"\n${shared}${packageSection}[dependencies]\nlocal = { package = "local-lib", path = "crates/local", version = "=2.0.0", registry = "fixture" }\nshared.workspace = true\n`,
   );
   repo.change('fix: relocate application to workspace root');
   const clone = repo.clone();
@@ -192,19 +202,19 @@ test('moving a Cargo package to the workspace root retains its own and shared de
     repo.git(repo.remote, 'show', 'cargo/relocated-app@1.0.2:Cargo.toml'),
   ).toContain('version = "=2.0.0"');
   expect(readFileSync(join(clone, 'Cargo.toml'), 'utf8')).toContain(
-    'version = "=1.0.0"',
+    'version = "=2.0.0"',
   );
   expect(repo.git(clone, 'status', '--porcelain')).toBe('');
 });
 
-test('moving a root Cargo package keeps shared projections at the root and respects explicit source edits', () => {
+test('moving a root Cargo package keeps shared explicit requirements at the root and respects explicit source edits', () => {
   const repo = workspace();
   const shared =
-    '[workspace.dependencies]\nshared = { package = "lib", path = "crates/lib", version = "=1.0.0" }\n';
+    '[workspace.dependencies]\nshared = { package = "lib", path = "crates/lib", version = "=2.0.0" }\n';
   const application = '[package]\nname = "app"\nversion = "1.0.0"\n';
   repo.file(
     'Cargo.toml',
-    `[workspace]\nmembers = ["crates/*"]\n${shared}${application}[dependencies]\ndirect = { package = "lib", path = "crates/lib", version = "=1.0.0" }\nshared.workspace = true\n`,
+    `[workspace]\nmembers = ["crates/*"]\n${shared}${application}[dependencies]\ndirect = { package = "lib", path = "crates/lib", version = "=2.0.0" }\nshared.workspace = true\n`,
   );
   repo.file('src/lib.rs', 'pub fn app() {}\n');
   repo.file(
@@ -224,7 +234,7 @@ test('moving a root Cargo package keeps shared projections at the root and respe
     'Cargo.toml',
     `[workspace]\nmembers = ["crates/*", "apps/*"]\n${shared}`,
   );
-  const manifest = `${application}[dependencies]\ndirect = { package = "lib", path = "../../crates/lib", version = "=1.0.0" }\nshared.workspace = true\n`;
+  const manifest = `${application}[dependencies]\ndirect = { package = "lib", path = "../../crates/lib", version = "=2.0.0" }\nshared.workspace = true\n`;
   repo.file('apps/app/Cargo.toml', manifest);
   repo.change('fix: relocate root application');
   const moved = repo.run({}, repo.clone());
@@ -234,31 +244,17 @@ test('moving a root Cargo package keeps shared projections at the root and respe
     .planning.plan.packages.find(
       (pkg: { id: string }) => pkg.id === 'cargo:app',
     );
-  expect(app.dependencyUpdates).toEqual(
-    expect.arrayContaining([
-      {
-        dependency: 'cargo:lib',
-        manifestPath: 'apps/app/Cargo.toml',
-        field: ['dependencies', 'direct', 'version'],
-        from: '=1.0.0',
-        to: '=2.0.0',
-        publishedRange: '=2.0.0',
-      },
-      {
-        dependency: 'cargo:lib',
-        manifestPath: 'Cargo.toml',
-        field: ['workspace', 'dependencies', 'shared', 'version'],
-        from: '=1.0.0',
-        to: '=2.0.0',
-        publishedRange: '=2.0.0',
-      },
-    ]),
+  expect(app.dependencyUpdates).toEqual([]);
+  expect(readFileSync(join(repo.cwd, 'Cargo.toml'), 'utf8')).toContain(
+    'version = "=2.0.0"',
   );
-  expect(app.dependencyUpdates).toHaveLength(2);
+  expect(readFileSync(join(repo.cwd, 'apps/app/Cargo.toml'), 'utf8')).toContain(
+    'version = "=2.0.0"',
+  );
 
   repo.file(
     'apps/app/Cargo.toml',
-    manifest.replace('version = "=1.0.0" }', 'version = "^1.0.0" }'),
+    manifest.replace('version = "=2.0.0" }', 'version = "^1.0.0" }'),
   );
   repo.change('fix: explicitly select earlier registry API');
   const edited = repo.run({}, repo.clone('main', 'edited'));
@@ -268,11 +264,8 @@ test('moving a root Cargo package keeps shared projections at the root and respe
     .planning.plan.packages.find(
       (pkg: { id: string }) => pkg.id === 'cargo:app',
     );
-  expect(updated.dependencyUpdates).toMatchObject([
-    {
-      manifestPath: 'Cargo.toml',
-      field: ['workspace', 'dependencies', 'shared', 'version'],
-      to: '=2.0.0',
-    },
-  ]);
+  expect(updated.dependencyUpdates).toEqual([]);
+  expect(readFileSync(join(repo.cwd, 'apps/app/Cargo.toml'), 'utf8')).toContain(
+    'version = "^1.0.0"',
+  );
 });

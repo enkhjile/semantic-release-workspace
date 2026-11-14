@@ -59,12 +59,9 @@ export async function verifyConditions(
   }
   changelogEnabled(config);
   npmVisibilityTimeout(config);
-  if (
-    config.synchronizeDependents !== undefined &&
-    typeof config.synchronizeDependents !== 'boolean'
-  )
+  if (config.synchronizeDependents !== undefined)
     throw new SemanticReleaseError(
-      'synchronizeDependents must be a boolean.',
+      'synchronizeDependents was removed. Upgrade dependency requirements explicitly in source manifests.',
       'EWORKSPACECONFIG',
     );
   npmChannel(context.branch.channel);

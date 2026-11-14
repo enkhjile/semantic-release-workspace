@@ -13,8 +13,8 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 
-test('Cargo starts a new coordinated prerelease after stable promotion and backmerge', async () => {
-  const repo = fixture({ synchronizeDependents: true });
+test('Cargo starts a new prerelease with manual dependency upgrades after stable promotion and backmerge', async () => {
+  const repo = fixture();
   const service = await registry();
   const manifests: Record<string, string> = {
     '.cargo/config.toml': `[registries.fixture]\nindex = "sparse+${service.url}/cargo/index/"\n`,
@@ -23,7 +23,7 @@ test('Cargo starts a new coordinated prerelease after stable promotion and backm
     'crates/core/Cargo.toml':
       '[package]\nname = "cycle-core"\nversion = "1.0.0"\nedition = "2024"\nlicense = "MIT"\ndescription = "Release cycle core"\n',
     'crates/app/Cargo.toml':
-      '[package]\nname = "cycle-app"\nversion = "1.0.0"\nedition = "2024"\nlicense = "MIT"\ndescription = "Release cycle app"\n\n[dependencies]\ncycle-core = { path = "../core", version = "=1.0.0" }\n',
+      '[package]\nname = "cycle-app"\nversion = "1.0.0"\nedition = "2024"\nlicense = "MIT"\ndescription = "Release cycle app"\n\n[dependencies]\ncycle-core = { path = "../core", version = "=1.1.0" }\n',
   };
   for (const [file, contents] of Object.entries(manifests)) {
     mkdirSync(join(repo.cwd, file, '..'), { recursive: true });
@@ -50,7 +50,21 @@ test('Cargo starts a new coordinated prerelease after stable promotion and backm
       expect(readFileSync(join(repo.cwd, file), 'utf8'), file).toBe(contents);
     expect(repo.git(repo.cwd, 'status', '--porcelain')).toBe('');
   };
+  const upgrade = (core: string) => {
+    const file = 'crates/app/Cargo.toml';
+    const source = readFileSync(join(repo.cwd, file), 'utf8');
+    const updated = source.replace(
+      /version = "=[^"]+"/,
+      `version = "=${core}"`,
+    );
+    if (source === updated) return;
+    manifests[file] = updated;
+    writeFileSync(join(repo.cwd, file), updated);
+    repo.git(repo.cwd, 'add', '.');
+    repo.commit(`fix(app): adopt core ${core}`);
+  };
   const release = async (core: string, app: string) => {
+    upgrade(core);
     const result = repo.run(settings);
     expect(result.ok, result.logs).toBe(true);
     const published = service.state().cargo;
@@ -120,6 +134,7 @@ test('Cargo starts a new coordinated prerelease after stable promotion and backm
   expect(repo.git(repo.cwd, 'rev-parse', 'HEAD')).toBe(stableHead);
   changeCore(3, 'fix: correct core after stable release');
 
+  upgrade('1.2.1-alpha.1');
   const refsBeforeDryRun = repo.refs();
   const uploadsBeforeDryRun = service.state().uploads;
   const dry = repo.run({ ...settings, dryRun: true });

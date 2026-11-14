@@ -230,7 +230,7 @@ async function cargoWorkspace() {
   );
   writeFileSync(
     join(repo.cwd, 'Cargo.toml'),
-    '[workspace]\nmembers = ["crates/*"]\nresolver = "3"\n[workspace.package]\nversion = "1.0.0"\n[workspace.dependencies]\nrenamed = { package = "fixture-core", path = "crates/core", version = "=1.0.0" }\n',
+    '[workspace]\nmembers = ["crates/*"]\nresolver = "3"\n[workspace.package]\nversion = "1.0.0"\n[workspace.dependencies]\nrenamed = { package = "fixture-core", path = "crates/core", version = "=1.1.0" }\n',
   );
   writeFileSync(
     join(repo.cwd, 'crates/core/Cargo.toml'),

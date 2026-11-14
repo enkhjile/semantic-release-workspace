@@ -170,14 +170,15 @@ export function validPlanning(value: unknown): value is PlanningState {
         (entry: unknown) =>
           record(entry) &&
           path(entry.path) &&
-          planned.some(
-            (pkg: Record<string, unknown>) =>
-              pkg.nextVersion &&
-              entry.path ===
-                (pkg.path === '.'
-                  ? 'CHANGELOG.md'
-                  : `${pkg.path}/CHANGELOG.md`),
-          ) &&
+          (entry.path === 'CHANGELOG.md' ||
+            planned.some(
+              (pkg: Record<string, unknown>) =>
+                pkg.nextVersion &&
+                entry.path ===
+                  (pkg.path === '.'
+                    ? 'CHANGELOG.md'
+                    : `${pkg.path}/CHANGELOG.md`),
+            )) &&
           (entry.before === null || typeof entry.before === 'string') &&
           typeof entry.after === 'string',
       )

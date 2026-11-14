@@ -166,7 +166,7 @@ export function formatReleaseNotes(
     ]),
     ...(notes.changelogs.length
       ? [
-          `Changelogs: ${notes.changelogs.map((change) => `\`${change.path}\``).join(', ')}`,
+          `Changelog: ${notes.changelogs.map((change) => `\`${change.path}\``).join(', ')}`,
           '',
         ]
       : []),
