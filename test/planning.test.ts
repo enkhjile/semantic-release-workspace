@@ -1,15 +1,11 @@
-import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
 import type { PlanningState } from '../src/plan-types.js';
-import { servers } from './fixtures/registry.js';
-import { fixture, roots } from './fixtures/repository.js';
+import { cleanupFixtures } from './fixtures/cleanup.js';
+import { fixture } from './fixtures/repository.js';
 
-afterEach(() => {
-  for (const server of servers.splice(0)) server.kill();
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
+afterEach(cleanupFixtures);
 function setup() {
   const f = fixture();
   function file(path: string, content: string) {

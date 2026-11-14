@@ -1,18 +1,15 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { afterEach, expect, test, vi } from 'vitest';
 import { archiveFile } from '../src/archive.js';
-import { registry, servers } from './fixtures/registry.js';
-import { fixture, roots } from './fixtures/repository.js';
+import { cleanupFixtures } from './fixtures/cleanup.js';
+import { registry } from './fixtures/registry.js';
+import { fixture } from './fixtures/repository.js';
 
 vi.setConfig({ testTimeout: 120_000 });
-afterEach(() => {
-  for (const server of servers.splice(0)) server.kill();
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
+afterEach(cleanupFixtures);
 
 test.each([
   ['direct', false],

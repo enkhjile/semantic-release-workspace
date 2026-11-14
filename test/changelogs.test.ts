@@ -2,7 +2,6 @@ import { spawn } from 'node:child_process';
 import {
   mkdirSync,
   readFileSync,
-  rmSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -12,15 +11,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, test, vi } from 'vitest';
 import { archiveFile } from '../src/archive.js';
-import { registry, servers } from './fixtures/registry.js';
-import { fixture, roots } from './fixtures/repository.js';
+import { cleanupFixtures } from './fixtures/cleanup.js';
+import { registry } from './fixtures/registry.js';
+import { fixture } from './fixtures/repository.js';
 
 vi.setConfig({ testTimeout: 120_000 });
-afterEach(() => {
-  for (const server of servers.splice(0)) server.kill();
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
+afterEach(cleanupFixtures);
 async function workspace() {
   const repo = fixture();
   const service = await registry();
