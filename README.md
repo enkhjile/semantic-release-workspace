@@ -21,26 +21,16 @@ Requirements for a consumer repository:
 - One release job at a time for the **whole repository**, including different
   branches. A concurrency group containing the branch name is insufficient.
 
-Install the current prerelease in the consumer repository root:
+Install a stable 1.x release in the consumer repository root:
 
 ```sh
-npm install --save-dev 'semantic-release@^25.0.9' semantic-release-workspace@alpha
+npm install --save-dev 'semantic-release@^25.0.9' 'semantic-release-workspace@^1.0.0'
 ```
 
-The `alpha` tag tracks prereleases. Once a stable version is published, omit
-`@alpha` to install the stable channel. To test unpublished local changes instead,
-follow the [development setup](https://github.com/enkhjile/semantic-release-workspace/blob/main/CONTRIBUTING.md#set-up-a-checkout)
-and build a local tarball:
-
-```sh
-pnpm pack
-```
-
-Then install that tarball in the consumer repository root, replacing the path:
-
-```sh
-npm install --save-dev 'semantic-release@^25.0.9' /absolute/path/to/semantic-release-workspace-0.0.0-development.tgz
-```
+For prereleases, use `semantic-release-workspace@alpha` instead. The `alpha` tag
+may include changes that are not yet in a stable release. See the
+[release history](https://github.com/enkhjile/semantic-release-workspace/releases)
+for published versions.
 
 Load the plugin in the consumer's `release.config.mjs`:
 
@@ -231,12 +221,6 @@ version when adopting a new incompatible path requirement, or use a registry-onl
 dependency. A `chore:` commit can align source metadata without requesting another
 release; use a separate `fix:`/`feat:` commit for the consumer upgrade.
 
-The former `synchronizeDependents` option is removed and rejected. New plans do
-not inherit automatically upgraded dependency requirements from old completed
-plans. Commit any previously generated requirement you want to retain. Finish an
-unfinished batch with the plugin version that created it before upgrading when
-its frozen plan differs under this policy; retries never silently re-plan it.
-
 Coordinator batch versions are independent of package versions. The first batch
 is `workspace-v1.0.0`; single-default-branch operation uses a patch counter,
 while multi-branch operation uses the strongest planned release type.
@@ -264,8 +248,7 @@ Read the changelog through package tags or retained prepared refs. The source
 branch is not advanced; original checkout bytes are restored and generated files
 removed after publication or failure. A root changelog is not automatically
 copied into each package archive. `publish: false` only records/previews notes
-and paths. Existing per-package changelog files are left untouched; consolidate
-any history you want to retain into the root file and commit it before upgrading.
+and paths. Existing per-package changelog files are left untouched.
 
 Pending retries reuse exact notes and changelog bytes and require the same
 changelog policy. User edits, unsafe paths, and invalid UTF-8 changelog inputs

@@ -19,7 +19,7 @@ pnpm check
 The published package supports **Node.js 24.11.0 and newer**, as declared by
 `engines.node` in [package.json](package.json). That file is also the source of
 truth for the exact development Node version (`devEngines.runtime`) and pnpm
-version (`packageManager`); do not maintain separate version pins in this guide.
+version (`packageManager`).
 Install pnpm using its [installation guide](https://pnpm.io/installation).
 Installation downloads the declared Node runtime when needed, and project scripts
 use it automatically. Commit `pnpm-lock.yaml` with dependency changes.
@@ -51,8 +51,8 @@ pnpm build
 pnpm exec vitest run --project integration test/publication.test.ts --maxWorkers=4 -t 'dry run'
 ```
 
-Vitest projects in `vitest.config.ts` partition the suite without moving or
-changing tests. Unit tests are pure in-memory coordination and manifest editing.
+Vitest projects in `vitest.config.ts` separate unit and integration tests.
+Unit tests are pure in-memory coordination and manifest editing.
 Tests using filesystem fixtures, Git, native packaging, or local servers belong
 to integration. New test files default to integration so they cannot silently
 fall outside CI; add genuinely pure files to the unit list when appropriate.
@@ -71,17 +71,27 @@ avoid scripts with external side effects.
 Reproduce release regressions through real `semantic-release` runs. Check the
 published artifact as well as the plan when manifests change, and cover dry-run
 side effects and fresh-clone recovery when release state is involved.
-The consumer-entry test packs and installs the plugin before loading it by its
-documented package name. Packaging regressions use native npm and Cargo archives;
-the npm output fixture exercises both legacy arrays and npm 12's keyed JSON.
-OIDC tests use local identity, exchange, and signing services to check that invalid
-audiences and exchange responses fail before credentials or artifacts proceed.
-Keep native Cargo dev-dependency omission, unchanged dependent versions, explicit
-manual upgrades, package moves with retained root changelog history, and divergent
-branch promotion covered through these real lifecycles. Assert requirements inside
-native archives: a plan alone does not prove a manual pin survived packaging.
-The aggregate GitHub fixture uses the real official GitHub plugin against a local
-API; it must never create a release on a public test repository.
+Use the public package entry point and native npm/Cargo archives to test packaging.
+Assert dependency requirements and release metadata inside the published artifact,
+not just the plan. Authentication tests must use local identity and registry
+fixtures; GitHub release tests must use a local API fixture.
+
+## Try local changes in a consumer repository
+
+Build a tarball from this checkout:
+
+```sh
+pnpm pack
+```
+
+Then install it in a disposable consumer repository, replacing the path:
+
+```sh
+npm install --save-dev 'semantic-release@^25.0.9' /absolute/path/to/semantic-release-workspace-0.0.0-development.tgz
+```
+
+Use local registry fixtures for publication tests. Remove the generated tarball
+when finished.
 
 ## Make a reviewable change
 
@@ -122,16 +132,15 @@ tests, all integration tests and packaging on minimum, project and latest stable
 Node. Manual runs always perform full verification. Ordinary feature branch
 pushes do not duplicate PR runs; open a draft PR for feedback.
 
-Publishing stays in `ci.yml` to preserve its npm trusted-publisher identity.
+The npm trusted publisher is bound to `ci.yml`; changing that filename requires
+updating the trust configuration.
 Release jobs require successful full verification on the merged commit and are
 serialized without cancelling an in-flight publication. PRs never publish.
-Docs-only changes start no tests or release attempt. Do not make this
-path-filtered workflow a required branch-protection check: a skipped workflow
-can leave the required check pending. Revisit that policy if mandatory PR checks
-are introduced.
-`main` publishes
-stable versions to npm's `latest` tag; `alpha`
-publishes versions such as `1.0.0-alpha.1` to `alpha` and creates GitHub prereleases.
+Docs-only changes start no tests or release attempt. A path-filtered workflow
+can leave a required branch-protection check pending when skipped; account for
+that behavior when configuring repository rules.
+`main` publishes stable versions to npm's `latest` tag; `alpha` publishes versions
+such as `1.0.0-alpha.1` to `alpha` and creates GitHub prereleases.
 Promote ready `alpha` work into `main` with a merge commit, then backmerge `main`
 into `alpha` with a merge commit before the next prerelease cycle. Preserve the
 ancestry of these long-lived branches rather than squashing their promotion or
@@ -140,10 +149,8 @@ a backmerge containing no unreleased changes does not request another release.
 Users can install prereleases with
 `npm install semantic-release-workspace@alpha`.
 
-The npm CLI is pinned as a direct development dependency so semantic-release
-uses the project's OIDC-capable client. pnpm/setup installs Node without npm;
-relying on the runner's global npm can select an older client without OIDC
-support and fail publishing with `ENEEDAUTH`.
+The npm CLI is a pinned development dependency so semantic-release uses the
+project's OIDC-capable client consistently across runners.
 
 The GitHub plugin keeps releases enabled while limiting issue/PR automation:
 
@@ -160,11 +167,8 @@ GitHub releases still contain generated release notes. See the
 The release job grants `contents: write` for GitHub releases and `id-token: write`
 for npm OIDC, and supplies `GITHUB_TOKEN`.
 
-Before enabling publishing, confirm the remote and package metadata match the
-repository, confirm npm package-name availability, and configure npm trusted
-publishing for this repository and workflow filename `ci.yml`. If npm requires
-an initial publication before trusted-publisher setup, bootstrap it only when the
-plugin is ready to use. Protect `main` with required verification checks.
+Maintainers must keep the npm trusted publisher aligned with this repository and
+`ci.yml`, and preserve its publication permissions when changing release setup.
 
 `pnpm release:dry-run` requires a configured repository, remote, and authentication
 and can contact external services. Maintainers should use it before a
@@ -180,13 +184,12 @@ without weakening the supported Node range or bypassing integration tests.
 
 Routine verification uses local fixtures, not public test publications. Live
 registry tests and destructive remote cleanup require explicit authorization;
-keep to any agreed repositories, versions and upload limits. Retry unfinished
-releases with their original source, configuration and retained artifacts. Never
+use designated test packages and obtain maintainer approval for public writes.
+Retry unfinished releases with their original source, configuration and retained artifacts. Never
 delete journals or rewrite tags to bypass a pending batch; see
 [recovery and backups](README.md#recovery-and-backups).
 
 After verification, stop local fixture servers and remove temporary clones,
-downloaded archives, `pnpm pack` tarballs and task-created Cargo targets. Keep
-compact evidence needed to explain results. Preserve user files, shared caches,
-active worktrees and release-state refs; do not run broad cleanup commands against
-other work or treat public package versions as disposable files.
+downloaded archives, `pnpm pack` tarballs and task-created Cargo targets. Preserve
+shared caches, other checkouts, and release-state refs. Published package versions
+are not temporary test files.
