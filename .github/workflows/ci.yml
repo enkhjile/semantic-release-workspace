@@ -14,110 +14,92 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  verify:
-    name: Fast checks (Node ${{ matrix.node }})
+  changes:
+    name: Classify changes
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - node: project
-            # Empty lets pnpm/setup read devEngines.runtime from package.json.
-            runtime: ""
-          - node: minimum
-          - node: latest
-            runtime: node@latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Read minimum Node.js from package.json
-        if: matrix.node == 'minimum'
-        id: minimum
-        run: |
-          echo "runtime=node@$(jq -r '.engines.node | ltrimstr(">=")' package.json)" >> "$GITHUB_OUTPUT"
-      - name: Set up Node.js, pnpm, and dependencies
-        uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
-        with:
-          runtime: ${{ steps.minimum.outputs.runtime || matrix.runtime }}
-          cache: true
-          require-lockfile: true
-      - run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm build
-      - run: pnpm test:unit
-
-  integration:
-    name: Verify (Node ${{ matrix.node }})
-    needs: verify
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - node: project
-            # Empty lets pnpm/setup read devEngines.runtime from package.json.
-            runtime: ""
-          - node: minimum
-          - node: latest
-            runtime: node@latest
+    outputs:
+      full: ${{ steps.changes.outputs.full }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Decide whether integration tests are needed
-        id: changes
+      - id: changes
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         shell: bash
         run: |
-          # Release-branch pushes and manual runs always verify the full matrix.
-          if [[ "$EVENT_NAME" != pull_request ]]; then
-            echo "integration=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # Three dots cover the whole PR; no-renames keeps deleted code visible.
-          if ! git diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" -- > "$RUNNER_TEMP/changed-paths"; then
-            echo "integration=true" >> "$GITHUB_OUTPUT"
+          case "$EVENT_NAME" in
+            pull_request) comparison="$BASE_SHA...$HEAD_SHA" ;;
+            push) comparison="$BASE_SHA..$HEAD_SHA" ;;
+            *) echo "full=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+          # Fail closed; deleted code and both sides of renames remain visible.
+          if ! git diff --no-renames --name-only -z "$comparison" -- > "$RUNNER_TEMP/changed-paths"; then
+            echo "full=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [[ ! -s "$RUNNER_TEMP/changed-paths" ]]; then
-            echo "integration=true" >> "$GITHUB_OUTPUT"
+            echo "full=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           while IFS= read -r -d '' path; do
             case "$path" in
               README.md|CONTRIBUTING.md|AGENTS.md|docs/*.md) ;;
-              *) echo "integration=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
+              *) echo "full=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
             esac
           done < "$RUNNER_TEMP/changed-paths"
-          echo "integration=false" >> "$GITHUB_OUTPUT"
-      - name: Read minimum Node.js from package.json
-        if: steps.changes.outputs.integration != 'false' && matrix.node == 'minimum'
-        id: minimum
+          echo "full=false" >> "$GITHUB_OUTPUT"
+
+  docs:
+    name: Documentation checks
+    needs: changes
+    if: needs.changes.outputs.full == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check Markdown whitespace and local links
+        run: python3 scripts/check-docs.py
+
+  full:
+    name: Full verification
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    uses: ./.github/workflows/verify.yml
+
+  result:
+    name: CI result
+    if: always()
+    needs: [changes, docs, full]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the selected checks to succeed
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          FULL_REQUIRED: ${{ needs.changes.outputs.full }}
+          DOCS_RESULT: ${{ needs.docs.result }}
+          FULL_RESULT: ${{ needs.full.result }}
         run: |
-          echo "runtime=node@$(jq -r '.engines.node | ltrimstr(">=")' package.json)" >> "$GITHUB_OUTPUT"
-      - name: Set up Node.js, pnpm, and dependencies
-        if: steps.changes.outputs.integration != 'false'
-        uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
-        with:
-          runtime: ${{ steps.minimum.outputs.runtime || matrix.runtime }}
-          cache: true
-          require-lockfile: true
-      - name: Install stable Rust for Cargo integration tests
-        if: steps.changes.outputs.integration != 'false'
-        run: |
-          rustup toolchain install stable --profile minimal --no-self-update
-          rustup default stable
-      - run: pnpm test:integration
-        if: steps.changes.outputs.integration != 'false'
-      - run: pnpm pack
-        if: steps.changes.outputs.integration != 'false'
+          [[ "$CHANGES_RESULT" == success ]] || exit 1
+          case "$FULL_REQUIRED" in
+            true) [[ "$FULL_RESULT" == success ]] ;;
+            false) [[ "$DOCS_RESULT" == success ]] ;;
+            *) exit 1 ;;
+          esac
 
   release:
-    needs: [verify, integration]
+    needs: [changes, full, result]
     if: >-
+      needs.changes.outputs.full == 'true' &&
+      needs.full.result == 'success' &&
+      needs.result.result == 'success' &&
       github.event_name != 'pull_request' &&
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/alpha')
     runs-on: ubuntu-latest
+    concurrency:
+      group: npm-release
+      cancel-in-progress: false
     permissions:
       contents: write
       id-token: write

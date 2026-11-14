@@ -112,21 +112,22 @@ The checkout version is a development placeholder: publishing writes release
 versions and records them in tags and GitHub release notes, without committing
 generated version changes back to `main`.
 
-The [GitHub Actions workflow](.github/workflows/ci.yml) verifies the minimum Node
-version from `engines.node`, the development version from `devEngines.runtime`,
-and latest stable Node. PRs (including draft PR updates) run lint, types, build, and unit tests first,
-then the full integration suite across all three Node versions. PRs changing only
-root `README.md`, `CONTRIBUTING.md`, `AGENTS.md`, or Markdown under `docs/` keep
-all fast checks but skip integration setup, Rust, tests and packing. The existing
-integration job names still report successful checks after classifying the diff.
-The comparison covers the whole PR, including deleted paths and both sides of
-renames. Empty/unknown diffs and every other path use full verification.
-Ordinary feature branch pushes do not start a duplicate workflow: open a draft PR
-for CI feedback.
-Pushes to `main` and `alpha` verify the merged commit through both job matrices
-before release, even for docs-only pushes. Manual runs also always execute both
-full matrices. The release job runs only after all verification checks pass,
-never for pull requests, and only on those release branches. `main` publishes
+The [CI workflow](.github/workflows/ci.yml) classifies the whole PR diff or
+push range once. Changes limited to root `README.md`, `CONTRIBUTING.md`,
+`AGENTS.md`, and Markdown under `docs/` run whitespace and local-file link checks
+without installing dependencies, running tests, or attempting a release.
+Every other path, an empty comparison, or a failed comparison selects
+[full verification](.github/workflows/verify.yml): lint, types, build, unit tests,
+integration tests and packaging on minimum, project and latest stable Node.
+Manual runs always select full verification. Ordinary feature branch pushes do
+not duplicate PR runs; open a draft PR for feedback.
+
+The always-running **CI result** gate requires the selected checks to succeed;
+configure that check as required in branch protection. Release jobs require both
+this gate and the full matrix to pass on the merged commit. Publishing stays in
+`ci.yml` to preserve its npm trusted-publisher identity, and release jobs are
+serialized without cancelling an in-flight publication. PRs never publish.
+`main` publishes
 stable versions to npm's `latest` tag; `alpha`
 publishes versions such as `1.0.0-alpha.1` to `alpha` and creates GitHub prereleases.
 Merge ready alpha work into `main`; semantic-release derives the stable version
