@@ -49,7 +49,7 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, commands and PR policy;
 
 - Routine tests must not publish publicly or use real credentials. Live publication,
   release-branch merges and destructive remote cleanup need explicit authorization.
-  Honor any existing approved scope and upload limits.
+  Use designated test packages and maintainer-approved publication scope.
 - `pnpm release` publishes this plugin; `release:dry-run` can contact authenticated
   services. Neither is a routine test. Consumer `publish: false` still writes
   planning tags/journals; only `--dry-run` is a nonpublishing preview without
@@ -59,5 +59,5 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, commands and PR policy;
   recovery. Preserve all documented release refs. Promote/backmerge release
   branches with merge commits so their ancestry survives.
 - Remove task-created temporary clones, tarballs, build targets and local servers
-  after verification. Preserve user files, shared caches, active worktrees and
-  compact evidence. Do not treat published versions or release refs as temp files.
+  after verification. Preserve user files, shared caches, other checkouts and
+  release refs. Do not treat published versions as temporary files.

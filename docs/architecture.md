@@ -63,10 +63,9 @@ Private packages participate in plans but receive no uploads or package tags.
 
 This boundary keeps dependency adoption under the maintainer's control. An app
 can keep consuming an older registry version while core releases independently.
-An app manifest upgrade needs its own attributed release commit. Historical
-automatic dependency projections do not override explicit requirements in new
-plans. Frozen pending plans must still match exactly; incompatible old batches
-must be completed with the version that created them before migration.
+An app manifest upgrade needs its own attributed release commit. New plans use
+source-controlled requirements, not dependency projections from release history.
+Frozen pending plans must match exactly across retries.
 
 ## Source, prepared commits and artifacts have different roles
 
