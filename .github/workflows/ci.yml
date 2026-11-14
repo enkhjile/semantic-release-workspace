@@ -8,7 +8,7 @@ on:
       - AGENTS.md
       - "docs/**/*.md"
   push:
-    branches: [main, rc]
+    branches: [release, rc]
     paths-ignore: *docs-paths
   workflow_dispatch:
 
@@ -27,7 +27,7 @@ jobs:
     needs: verify
     if: >-
       github.event_name != 'pull_request' &&
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/rc')
+      (github.ref == 'refs/heads/release' || github.ref == 'refs/heads/rc')
     runs-on: ubuntu-latest
     concurrency:
       group: npm-release

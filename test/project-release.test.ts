@@ -9,8 +9,10 @@ import { fixture } from './fixtures/repository.js';
 
 afterEach(cleanupFixtures);
 
-test('project releases transition from alpha history to rc using local npm and OIDC', async () => {
+test('project releases publish rc and release through OIDC while main stays development-only', async () => {
   const repo = fixture();
+  repo.git(repo.cwd, 'branch', '-m', 'main', 'release');
+  repo.git(repo.cwd, 'push', 'origin', 'release');
   const service = await registry();
   service.trusted();
   writeFileSync(
@@ -113,8 +115,8 @@ test('project releases transition from alpha history to rc using local npm and O
   expect(retired.ok, retired.logs ?? retired.message).toBe(true);
   expect(retired.result).toBe(false);
   expect(service.state().uploads).toHaveLength(1);
-  repo.git(repo.cwd, 'checkout', '-b', 'dev', 'rc');
-  repo.commit('chore: establish development branch');
+  repo.git(repo.cwd, 'checkout', '-b', 'main', 'rc');
+  repo.commit('fix: development changes must not publish');
   const development = run(false);
   expect(development.ok, development.logs ?? development.message).toBe(true);
   expect(development.result).toBe(false);
@@ -135,4 +137,23 @@ test('project releases transition from alpha history to rc using local npm and O
     rc: '1.0.0-rc.2',
   });
   expect(repo.tags()).toContain('v1.0.0-alpha.11');
+  // A new CI checkout does not retain the npm plugin's generated version.
+  repo.git(repo.cwd, 'restore', 'package.json');
+  repo.git(repo.cwd, 'checkout', 'release');
+  repo.git(
+    repo.cwd,
+    'merge',
+    '--no-ff',
+    'rc',
+    '-m',
+    'chore: promote release candidate',
+  );
+  repo.git(repo.cwd, 'push', 'origin', 'release');
+  const stable = run(false);
+  expect(stable.ok, stable.logs ?? stable.message).toBe(true);
+  expect(stable.result.nextRelease.version).toBe('1.0.0');
+  expect(service.state().npmTags['project-release-fixture']).toEqual({
+    rc: '1.0.0-rc.2',
+    latest: '1.0.0',
+  });
 }, 60_000);

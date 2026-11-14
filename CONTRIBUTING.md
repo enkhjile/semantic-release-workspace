@@ -5,13 +5,13 @@
 ## Set up a checkout
 
 Fork [semantic-release-workspace](https://github.com/enkhjile/semantic-release-workspace),
-then clone your fork and create a branch from `dev`:
+then clone your fork and create a branch from `main`:
 
 ```sh
 git clone https://github.com/YOUR-USER/semantic-release-workspace.git
 cd semantic-release-workspace
 git remote add upstream https://github.com/enkhjile/semantic-release-workspace.git
-git switch dev
+git switch main
 git switch -c fix/describe-your-change
 pnpm install --frozen-lockfile
 pnpm check
@@ -103,7 +103,7 @@ when finished.
 - For code or packaging changes, run `pnpm check` and inspect `pnpm pack` output.
   For docs-only changes, validate links, examples, and formatting. Report what
   you checked and any checks you could not run; do not claim unverified results.
-- Open a focused pull request against `dev`, explain the problem and resulting
+- Open a focused pull request against `main`, explain the problem and resulting
   behavior, and include relevant validation. Maintainers promote reviewed changes
   to `rc` for release candidates.
 
@@ -123,10 +123,10 @@ This section describes releases of this plugin itself. Its
 The workspace plugin's consumer setup is documented in the [README](README.md).
 The checkout version is a development placeholder: publishing writes release
 versions and records them in tags and GitHub release notes, without committing
-generated version changes back to `main`.
+generated version changes back to the source branch.
 
 The [CI workflow](.github/workflows/ci.yml) uses native path filters to skip PRs
-and `main`/`rc` pushes changing only root `README.md`, `CONTRIBUTING.md`,
+and `release`/`rc` pushes changing only root `README.md`, `CONTRIBUTING.md`,
 `AGENTS.md`, or Markdown under `docs/`. Mixed code/docs changes run CI.
 [Full verification](.github/workflows/verify.yml) runs lint, types, build, unit
 tests, all integration tests and packaging on minimum, project and latest stable
@@ -140,12 +140,12 @@ serialized without cancelling an in-flight publication. PRs never publish.
 Docs-only changes start no tests or release attempt. A path-filtered workflow
 can leave a required branch-protection check pending when skipped; account for
 that behavior when configuring repository rules.
-`main` publishes stable versions to npm's `latest` tag; `rc` publishes versions
+`release` publishes stable versions to npm's `latest` tag; `rc` publishes versions
 such as `1.0.0-rc.1` to `rc` and creates GitHub prereleases.
-`dev` is the development branch and never publishes npm versions. Promote reviewed
-`dev` work into `rc` with a merge commit to publish a release candidate. When ready
-for a stable release, merge `rc` into `main`, then backmerge `main` into `rc` and
-`rc` into `dev`. Preserve the ancestry of these long-lived branches rather than
+`main` is the development branch and never publishes npm versions. Promote reviewed
+`main` work into `rc` with a merge commit to publish a release candidate. When ready
+for a stable release, merge `rc` into `release`, then backmerge `release` into `rc` and
+`rc` into `main`. Preserve the ancestry of these long-lived branches rather than
 squashing their promotion or backmerge. semantic-release derives versions from
 commits and release history; a backmerge containing no unreleased changes does
 not request another release.
