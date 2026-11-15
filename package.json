@@ -73,12 +73,12 @@
   },
   "packageManager": "pnpm@12.15.0",
   "engines": {
-    "node": ">=24.11.0"
+    "node": "^24.22.3 || >=26.13.1"
   },
   "devEngines": {
     "runtime": {
       "name": "node",
-      "version": "24.17.0",
+      "version": "24.22.3",
       "onFail": "download"
     }
   },
