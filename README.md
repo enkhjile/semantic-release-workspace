@@ -327,13 +327,18 @@ Artifact manifests convert workspace/local references to publishable ranges;
 prepared manifests retain workspace protocols. Packing uses isolated Git-aware
 copies with installed build tools and native ignore selection.
 
-After an npm upload succeeds, the plugin polls for version metadata for up to
-`npm.visibilityTimeout` milliseconds; individual registry requests may run
-beyond that period. The default is `300000` (five minutes). Once visible, its
-integrity and, when enabled, provenance must match the retained artifact.
-Missing or mismatched provenance fails immediately. If waiting times out, rerun
-the same batch; a fresh clone can resume waiting using the recorded upload
-acknowledgment without uploading the artifact again.
+A successful npm upload completes publication without waiting for registry reads.
+If the response is lost, recovery checks the registry for matching integrity and,
+when enabled, provenance before accepting an existing version. These uncertain
+uploads get up to five confirmation reads with exponential backoff;
+`npm.visibilityTimeout` bounds the waiting time (default `300000` milliseconds,
+zero disables waiting). Individual requests may run beyond this limit.
+If confirmation fails, retry the same batch with its retained artifact.
+
+npm packing does not require newly published dependencies to be visible. Cargo
+packaging does: before packing a dependent that uses a newly published workspace
+crate, the plugin waits up to five minutes for that crate's index checksum.
+Independent crates and retries with retained artifacts skip this wait.
 
 ### Trusted publishing and provenance
 
@@ -395,8 +400,10 @@ ordinary read access.
 Provenance is public and binds the tarball digest, package/version, repository,
 and source commit to its CI identity. Arbitrary environment variables are not
 copied into statements. The original signed bundle is retained with its tarball;
-retries verify and reuse it without signing again. Registry confirmation checks
-both integrity and retained attestation. Missing/corrupt proof leaves work pending.
+retries verify and reuse it without signing again. Recovery of uncertain uploads
+and channel promotion check both registry integrity and retained attestation.
+Missing/corrupt proof leaves that work pending; successful uploads need no
+post-upload attestation read.
 Identity/exchange/signing redirects are rejected; attestation reads stay within
 the frozen registry origin.
 
@@ -541,11 +548,12 @@ symlink paths rather than overwriting them. Lockfile changes stay in isolated
 packaging copies.
 
 Artifacts are retained in Git before upload intent and limited to **100 MiB each**.
-An existing registry version is accepted only with matching retained bytes and
-this batch's recorded upload intent. Foreign versions, checksum mismatches,
+For an uncertain upload, an existing registry version is accepted only with
+matching retained bytes and this batch's recorded upload intent. Foreign versions, checksum mismatches,
 missing/corrupt artifacts, changed policy, and conflicting tags stop recovery.
-Visible accepted uploads and failed tag pushes can be reconciled without another
-upload; rejected uploads reuse artifacts with fresh credentials. If the upload
+Recorded successful uploads and failed tag pushes can be reconciled without
+registry confirmation or another upload; rejected uploads reuse artifacts with
+fresh credentials. If the upload
 response is lost or the process crashes before recording its acknowledgment, a
 retry may upload the same retained artifact again when the version is not yet
 visible.

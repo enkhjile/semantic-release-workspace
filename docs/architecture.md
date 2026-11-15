@@ -112,15 +112,16 @@ and symlink replacements instead of assuming every dirty file is release-owned.
 
 [Publication](../src/publication.ts) freezes destinations and checks all package
 versions for conflicts before recording the batch as pending. Before each upload,
-it retains the archive and persists an upload intent. It then reads the registry's
-npm integrity or Cargo index checksum: a successful HTTP response is insufficient
-proof, and a lost response is not proof of failure.
-
-An existing version is recoverable only when its bytes match the retained
-artifact and this batch recorded intent. Foreign versions fail even if their
+it retains the archive and persists an upload intent. A successful upload response
+is persisted as published immediately. A lost response remains uncertain: recovery
+requires matching npm integrity (and enabled provenance) or Cargo index checksum,
+together with this batch's recorded intent. Foreign versions fail even if their
 bytes match. Publication and tag progress are persisted separately, so a failed
-tag push can resume without uploading again. Delayed registry visibility leaves
-pending work at the same source commit. Published versions are irreversible;
+tag push can resume without registry reads or uploading again. Older acknowledged
+npm receipts are also accepted; local artifact validation still runs on every retry.
+Visibility polling is limited to uncertain upload recovery and newly published
+Cargo dependencies needed by native packaging. Delayed dependency visibility can
+leave the consumer pending while the dependency remains published. Published versions are irreversible;
 recovery finishes remaining steps instead of attempting a registry rollback.
 
 A fresh clone fetches journals and retained refs to reconstruct this state.
@@ -193,8 +194,8 @@ and source identity through an npm-compatible statement and verified Sigstore
 bundle. The official SDK and TUF verification check certificates and transparency
 proofs; a forwarding gateway rejects redirects for SDK signing traffic. Custom
 service URLs and the trusted-root digest are frozen. The verified public bundle
-is retained before upload intent, and registry confirmation requires that same
-attestation alongside tarball integrity. Exact bundle reuse preserves the
+is retained before upload intent. Registry confirmation for uncertain uploads
+and channel promotion requires that same attestation alongside tarball integrity. Exact bundle reuse preserves the
 original CI run, avoids additional signing ledger entries, and lets an accepted
 uncertain upload finish without fresh CI credentials. Retries and promotions
 must not re-sign old bytes as a new build.

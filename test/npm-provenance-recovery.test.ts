@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { type Bundle, verify } from 'sigstore';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -89,7 +96,7 @@ function withRegistryDefaults(bundle: Bundle): Bundle {
   return result;
 }
 
-test('real semantic-release recovers an acknowledged hidden OIDC upload without credentials, packing or signing again', async () => {
+test('real semantic-release recovers a successful hidden OIDC upload after a tag failure without credentials, packing or signing again', async () => {
   const { repo, service, signing, settings, packs } = await setup();
   const timed = {
     ...settings,
@@ -98,16 +105,20 @@ test('real semantic-release recovers an acknowledged hidden OIDC upload without 
       npm: { ...settings.pluginConfig.npm, visibilityTimeout: 0 },
     },
   };
+  const hook = join(repo.remote, 'hooks/update');
+  writeFileSync(
+    hook,
+    '#!/bin/sh\ncase "$1" in refs/tags/npm/*) exit 1;; esac\n',
+  );
+  chmodSync(hook, 0o755);
   service.control('hide-npm');
   const initial = repo.run(timed);
   expect(initial.ok).toBe(false);
-  expect(initial.codes).toContain('EWORKSPACEPUBLISH');
   const pending = repo.state();
   expect(pending.status).toBe('pending');
   expect(pending.execution.packages[0]).toMatchObject({
     intent: true,
-    acknowledged: true,
-    published: false,
+    published: true,
     tagged: false,
   });
   const artifact = pending.execution.packages[0].artifact;
@@ -123,25 +134,7 @@ test('real semantic-release recovers an acknowledged hidden OIDC upload without 
     ...timed,
     env: { ...service.env, PACK_TRACE: settings.env.PACK_TRACE },
   };
-  const hidden = repo.run(withoutCI, repo.clone('main', 'hidden-retry'));
-  expect(hidden.ok).toBe(false);
-  expect(hidden.codes).toContain('EWORKSPACEPUBLISH');
-  expect(repo.state().execution.packages[0].artifact).toEqual(artifact);
-  expect(service.state().uploads).toEqual([
-    'npm:@fixture/provenance-core@1.1.0',
-  ]);
-  expect(
-    service
-      .state()
-      .requests.filter((call: { method: string }) => call.method === 'PUT'),
-  ).toHaveLength(1);
-  expect(service.state().exchanges).toHaveLength(1);
-  expect(signing.events().filter((path) => path.startsWith('/api/'))).toEqual(
-    signingCalls,
-  );
-  expect(packs()).toBe('pack\n');
-
-  service.control('');
+  unlinkSync(hook);
   const recovered = repo.run(withoutCI, repo.clone('main', 'visible-retry'));
   expect(recovered.ok, recovered.logs).toBe(true);
   expect(repo.state().status).toBe('complete');

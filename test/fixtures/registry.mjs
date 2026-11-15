@@ -298,6 +298,20 @@ const handler = async (req, res) => {
     const name = path.split('/').at(-1);
     const versions = state.cargo[name];
     if (!versions) return json({ error: 'not found' }, 404);
+    if (
+      controlValue === 'hide-cargo' ||
+      controlValue.startsWith('hide-cargo:')
+    ) {
+      state.cargoVisibilityReads ??= {};
+      const reads = (state.cargoVisibilityReads[name] ?? 0) + 1;
+      state.cargoVisibilityReads[name] = reads;
+      writeFileSync(stateFile, JSON.stringify(state));
+      if (
+        controlValue === 'hide-cargo' ||
+        reads <= Number(controlValue.slice('hide-cargo:'.length))
+      )
+        return json({ error: 'not found' }, 404);
+    }
     res.writeHead(200, { 'content-type': 'text/plain' });
     return res.end(
       `${Object.entries(versions)
