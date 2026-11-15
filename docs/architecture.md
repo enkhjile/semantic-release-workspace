@@ -1,6 +1,7 @@
 # Architecture
 
-The [README](../README.md) describes supported behavior and configuration;
+The [README](../README.md) introduces usage; the [reference](reference.md) details
+supported behavior and configuration;
 [CONTRIBUTING](../CONTRIBUTING.md) covers development and verification commands.
 
 ## Coordinator and package identities
