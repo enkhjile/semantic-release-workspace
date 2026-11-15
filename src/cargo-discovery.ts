@@ -197,8 +197,8 @@ export async function discoverCargoWorkspaces(
   }
   const seen = new Set<string>();
   const packages: WorkspacePackage[] = [];
-  for (let index = 0; index < queue.length; index++) {
-    const directory = queue[index];
+  // Visit members appended during discovery.
+  for (const directory of queue) {
     if (!directory || seen.has(directory)) continue;
     assertInside(root, directory);
     // Cargo exclusions are literal path prefixes, unlike member globs.

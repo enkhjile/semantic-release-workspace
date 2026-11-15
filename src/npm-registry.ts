@@ -83,6 +83,30 @@ async function options(
     );
   }
 }
+
+function comparableProvenance(value: unknown): unknown {
+  if (!record(value)) return value;
+  const bundle = structuredClone(value);
+  const envelope = bundle.dsseEnvelope;
+  if (record(envelope) && Array.isArray(envelope.signatures)) {
+    for (const signature of envelope.signatures)
+      if (record(signature) && signature.keyid === '') delete signature.keyid;
+  }
+  const material = bundle.verificationMaterial;
+  const timestamps = record(material)
+    ? material.timestampVerificationData
+    : undefined;
+  // ProtoJSON may emit empty defaults. Preserve the parent message and all
+  // other proof fields, including unknown fields and nonempty values.
+  if (
+    record(timestamps) &&
+    Array.isArray(timestamps.rfc3161Timestamps) &&
+    timestamps.rfc3161Timestamps.length === 0
+  )
+    delete timestamps.rfc3161Timestamps;
+  return bundle;
+}
+
 export async function npmProbe(
   context: VerifyConditionsContext,
   dest: Destination,
@@ -109,6 +133,7 @@ export async function npmProbe(
     foundVersion = true;
     const bundle = provenanceBundle(metadata);
     if (bundle) {
+      const expectedProof = comparableProvenance(bundle);
       if (
         !record(entry.dist.attestations) ||
         typeof entry.dist.attestations.url !== 'string'
@@ -126,7 +151,12 @@ export async function npmProbe(
         !record(proof) ||
         !Array.isArray(proof.attestations) ||
         !proof.attestations.some(
-          (value) => record(value) && isDeepStrictEqual(value.bundle, bundle),
+          (value) =>
+            record(value) &&
+            isDeepStrictEqual(
+              comparableProvenance(value.bundle),
+              expectedProof,
+            ),
         )
       )
         throw new Error();

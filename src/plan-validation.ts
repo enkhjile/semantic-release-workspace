@@ -60,7 +60,14 @@ export function validPlanning(value: unknown): value is PlanningState {
     !oid(plan.head) ||
     !(plan.baseHead === null || oid(plan.baseHead)) ||
     !Array.isArray(plan.packages) ||
-    !Array.isArray(plan.groups)
+    !Array.isArray(plan.groups) ||
+    (plan.dependencyPolicy !== undefined &&
+      !['independent', 'synchronize'].includes(
+        String(plan.dependencyPolicy),
+      )) ||
+    (plan.stagingDependencies !== undefined &&
+      (!Array.isArray(plan.stagingDependencies) ||
+        !plan.stagingDependencies.every(update)))
   )
     return false;
   const names = new Set<string>();
@@ -163,14 +170,15 @@ export function validPlanning(value: unknown): value is PlanningState {
         (entry: unknown) =>
           record(entry) &&
           path(entry.path) &&
-          planned.some(
-            (pkg: Record<string, unknown>) =>
-              pkg.nextVersion &&
-              entry.path ===
-                (pkg.path === '.'
-                  ? 'CHANGELOG.md'
-                  : `${pkg.path}/CHANGELOG.md`),
-          ) &&
+          (entry.path === 'CHANGELOG.md' ||
+            planned.some(
+              (pkg: Record<string, unknown>) =>
+                pkg.nextVersion &&
+                entry.path ===
+                  (pkg.path === '.'
+                    ? 'CHANGELOG.md'
+                    : `${pkg.path}/CHANGELOG.md`),
+            )) &&
           (entry.before === null || typeof entry.before === 'string') &&
           typeof entry.after === 'string',
       )

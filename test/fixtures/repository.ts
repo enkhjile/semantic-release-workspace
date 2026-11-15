@@ -28,7 +28,7 @@ interface Outcome {
   logs: string;
 }
 
-export function fixture() {
+export function fixture(defaultPluginConfig: Record<string, unknown> = {}) {
   const root = mkdtempSync(join(tmpdir(), 'semantic-release-workspace-'));
   roots.push(root);
   const remote = join(root, 'remote.git');
@@ -106,7 +106,7 @@ export function fixture() {
             }
         )[];
         dryRun?: boolean;
-        failure?: 'prepare' | 'after-prepare' | 'publish';
+        failure?: 'prepare' | 'after-prepare' | 'publish' | 'generate-notes';
         tagFormat?: string;
         pluginConfig?: Record<string, unknown>;
         env?: Record<string, string>;
@@ -115,7 +115,16 @@ export function fixture() {
     ): Outcome {
       const stdout = execFileSync(
         process.execPath,
-        [runner, directory, remote, plugin, JSON.stringify(settings)],
+        [
+          runner,
+          directory,
+          remote,
+          plugin,
+          JSON.stringify({
+            ...settings,
+            pluginConfig: { ...defaultPluginConfig, ...settings.pluginConfig },
+          }),
+        ],
         {
           cwd: directory,
           env,

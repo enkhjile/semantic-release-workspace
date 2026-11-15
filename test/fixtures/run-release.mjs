@@ -14,7 +14,9 @@ const output = new Writable({
 const failure = {
   [settings.failure === 'prepare' || settings.failure === 'after-prepare'
     ? 'prepare'
-    : 'publish']() {
+    : settings.failure === 'generate-notes'
+      ? 'generateNotes'
+      : 'publish']() {
     if (settings.failure)
       throw new SemanticReleaseError('Injected lifecycle failure', 'EINJECTED');
   },

@@ -125,8 +125,8 @@ async function jsonDirectories(
   const selected = await directories(root, inputs, !yarn);
   if (!recursive) return selected;
   const seen = new Set(selected);
-  for (let index = 0; index < selected.length; index++) {
-    const directory = selected[index];
+  // Visit members appended during discovery.
+  for (const directory of selected) {
     if (!directory) continue;
     const raw = await text(root, join(directory, 'package.json'));
     if (raw === undefined)

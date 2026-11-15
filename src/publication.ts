@@ -1,7 +1,9 @@
 import type { VerifyConditionsContext } from 'semantic-release';
+import { parse } from 'smol-toml';
 import { createCargoIdentity, hasCargoIdentity } from './cargo-identity.js';
+import { cargoPublicationDependencies } from './dependencies.js';
 import { discoverWorkspaces } from './discovery.js';
-import { git, snapshot, writeJournal } from './journal.js';
+import { git, gitOutput, snapshot, writeJournal } from './journal.js';
 import {
   applyManifests,
   type ManifestChange,
@@ -13,8 +15,12 @@ import {
   validateProvenanceContext,
   verifyProvenance,
 } from './npm-provenance.js';
-import type { PlanningState } from './plan-types.js';
-import type { Execution, PublicationPackage } from './publication-state.js';
+import type { PackagePlan, PlanningState } from './plan-types.js';
+import type {
+  Destination,
+  Execution,
+  PublicationPackage,
+} from './publication-state.js';
 import {
   completeCargoDestination,
   destination,
@@ -35,6 +41,7 @@ import {
   retainArtifact,
 } from './release-io.js';
 import { notesForRelease } from './release-notes.js';
+import { record } from './workspace-files.js';
 
 type Planning = PlanningState & {
   current: Awaited<ReturnType<typeof snapshot>>;
@@ -43,6 +50,25 @@ export function publishing(config: Record<string, unknown>): boolean {
   if (config.publish !== undefined && typeof config.publish !== 'boolean')
     return releaseError('publish must be a boolean.', 'EWORKSPACECONFIG');
   return config.publish !== false;
+}
+export function npmVisibilityTimeout(config: Record<string, unknown>): number {
+  const options = config.npm;
+  if (options !== undefined && !record(options))
+    return releaseError('npm must be an object.', 'EWORKSPACECONFIG');
+  const timeout =
+    options?.visibilityTimeout === undefined
+      ? 300_000
+      : options.visibilityTimeout;
+  if (
+    !Number.isSafeInteger(timeout) ||
+    typeof timeout !== 'number' ||
+    timeout < 0
+  )
+    return releaseError(
+      'npm.visibilityTimeout must be a nonnegative integer in milliseconds.',
+      'EWORKSPACECONFIG',
+    );
+  return timeout;
 }
 function tagName(id: string, version: string): string {
   return `${id.replace(':', '/')}@${version}`;
@@ -121,6 +147,8 @@ export async function preflight(
       'Cyclic Cargo releases cannot be published. Break the cycle before releasing.',
       'EWORKSPACEDEPENDENCY',
     );
+  // Validate every staged manifest in dry-runs too, before preparing release refs.
+  await manifestChanges(context.cwd ?? process.cwd(), planning.plan);
   const inventory = await discoverWorkspaces(context.cwd ?? process.cwd());
   const result: PublicationPackage[] = [];
   for (const pkg of planning.plan.packages.filter(
@@ -176,49 +204,65 @@ export async function preflight(
   }
   return result;
 }
+type RetainedArtifact = Awaited<ReturnType<typeof readArtifact>>;
+
+async function verifiedArtifact(
+  context: VerifyConditionsContext,
+  planning: Planning,
+  execution: Execution,
+  entry: PublicationPackage,
+  cached?: RetainedArtifact,
+): Promise<RetainedArtifact> {
+  const pkg = planning.plan.packages.find((pkg) => pkg.id === entry.id);
+  if (
+    !pkg ||
+    !entry.artifact ||
+    entry.artifact.ref !==
+      refFor(planning.plan.head, entry.id, releaseScope(context))
+  )
+    return releaseError(
+      'Retained artifact belongs to a different release.',
+      'EWORKSPACEARTIFACT',
+    );
+  const artifact = cached ?? (await readArtifact(context, entry.artifact));
+  if (
+    (await git(context, 'rev-parse', `${entry.artifact.commit}^`)) !==
+    execution.prepared
+  )
+    return releaseError(
+      'Retained artifact parent does not match this release.',
+      'EWORKSPACEARTIFACT',
+    );
+  await validateArtifact(
+    entry.destination,
+    pkg,
+    artifact.bytes,
+    artifact.metadata,
+  );
+  if (entry.destination.ecosystem === 'npm')
+    await verifyProvenance(
+      context,
+      entry.destination,
+      pkg,
+      artifact.bytes,
+      artifact.metadata,
+      planning.plan.head,
+    );
+  return artifact;
+}
+
 async function retainedArtifacts(
   context: VerifyConditionsContext,
   planning: Planning,
   execution: Execution,
 ) {
-  const retained = new Map<string, Awaited<ReturnType<typeof readArtifact>>>();
+  const retained = new Map<string, RetainedArtifact>();
   for (const entry of execution.packages) {
     if (!entry.artifact) continue;
-    const pkg = planning.plan.packages.find((pkg) => pkg.id === entry.id);
-    if (
-      !pkg ||
-      entry.artifact.ref !==
-        refFor(planning.plan.head, entry.id, releaseScope(context))
-    )
-      return releaseError(
-        'Retained artifact belongs to a different release.',
-        'EWORKSPACEARTIFACT',
-      );
-    const artifact = await readArtifact(context, entry.artifact);
-    if (
-      (await git(context, 'rev-parse', `${entry.artifact.commit}^`)) !==
-      execution.prepared
-    )
-      return releaseError(
-        'Retained artifact parent does not match this release.',
-        'EWORKSPACEARTIFACT',
-      );
-    await validateArtifact(
-      entry.destination,
-      pkg,
-      artifact.bytes,
-      artifact.metadata,
+    retained.set(
+      entry.id,
+      await verifiedArtifact(context, planning, execution, entry),
     );
-    if (entry.destination.ecosystem === 'npm')
-      await verifyProvenance(
-        context,
-        entry.destination,
-        pkg,
-        artifact.bytes,
-        artifact.metadata,
-        planning.plan.head,
-      );
-    retained.set(entry.id, artifact);
   }
   return retained;
 }
@@ -271,6 +315,7 @@ export async function preparePublication(
   const retained = await retainedArtifacts(context, planning, execution);
   // A foreign version should be rejected before starting an irreversible batch.
   for (const entry of execution.packages) {
+    if (entry.published || entry.acknowledged) continue;
     const pkg = planning.plan.packages.find((pkg) => pkg.id === entry.id);
     if (!pkg)
       return releaseError(
@@ -287,10 +332,7 @@ export async function preparePublication(
       entry.destination.ecosystem === 'npm'
         ? entry.artifact?.integrity
         : entry.artifact?.sha256;
-    if (
-      (found !== null && (!entry.intent || found !== expected)) ||
-      (found === null && entry.published)
-    )
+    if (found !== null && (!entry.intent || found !== expected))
       return releaseError(
         `Registry version conflicts with this batch: ${pkg.id}@${pkg.nextVersion}.`,
         'EWORKSPACECONFLICT',
@@ -304,6 +346,33 @@ export async function preparePublication(
     planning,
     execution,
   );
+}
+async function waitForCargoDependency(
+  context: VerifyConditionsContext,
+  destination: Destination,
+  pkg: PackagePlan,
+  checksum: string,
+): Promise<void> {
+  const deadline = performance.now() + 300_000;
+  let delay = 250;
+  while (true) {
+    const found = await probe(context, destination, pkg);
+    if (found === checksum) return;
+    if (found !== null)
+      return releaseError(
+        'Dependency checksum conflicts with this batch.',
+        'EWORKSPACECONFLICT',
+      );
+    const remaining = deadline - performance.now();
+    if (remaining <= 0)
+      return releaseError(
+        'A published Cargo dependency is not yet visible. Retry this same batch.',
+      );
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(delay, remaining)),
+    );
+    delay = Math.min(delay * 2, 10_000);
+  }
 }
 export async function publishPackages(
   config: Record<string, unknown>,
@@ -334,6 +403,17 @@ export async function publishPackages(
     );
   await tags(context, execution, planning);
   const retained = await retainedArtifacts(context, planning, execution);
+  const cargoSource = inventory.packages.some(
+    (pkg) => pkg.ecosystem === 'cargo',
+  )
+    ? await readGitFile(context, planning.plan.head, 'Cargo.toml')
+    : null;
+  const cargo = cargoSource === null ? {} : parse(cargoSource);
+  const dependencies = cargoPublicationDependencies(
+    inventory,
+    planning.plan.packages,
+    record(cargo.workspace) ? cargo.workspace : {},
+  );
   const cargoIdentity = createCargoIdentity(context);
   try {
     await applyManifests(root, changes);
@@ -370,6 +450,22 @@ export async function publishPackages(
             );
           entry.artifact = created;
         } else {
+          // Native Cargo packaging resolves registry dependencies; retained artifacts do not.
+          for (const dependency of dependencies.get(id) ?? []) {
+            const target = execution.packages.find(
+              (item) => item.id === dependency,
+            );
+            const targetPlan = planning.plan.packages.find(
+              (item) => item.id === dependency,
+            );
+            if (!target?.published || !target.artifact || !targetPlan) continue;
+            await waitForCargoDependency(
+              context,
+              target.destination,
+              targetPlan,
+              target.artifact.sha256,
+            );
+          }
           const artifact = await pack(
             context,
             entry.destination,
@@ -389,98 +485,72 @@ export async function publishPackages(
         }
         await persist();
       }
-      if (
-        entry.artifact.ref !==
-        refFor(planning.plan.head, id, releaseScope(context))
-      )
-        return releaseError(
-          'Retained artifact belongs to a different release.',
-          'EWORKSPACEARTIFACT',
-        );
-      const artifact =
-        retained.get(id) ?? (await readArtifact(context, entry.artifact));
-      if (
-        (await git(context, 'rev-parse', `${entry.artifact.commit}^`)) !==
-        execution.prepared
-      )
-        return releaseError(
-          'Retained artifact parent does not match this release.',
-          'EWORKSPACEARTIFACT',
-        );
-      await validateArtifact(
-        entry.destination,
-        pkg,
-        artifact.bytes,
-        artifact.metadata,
+      const artifact = await verifiedArtifact(
+        context,
+        planning,
+        execution,
+        entry,
+        retained.get(id),
       );
-      if (entry.destination.ecosystem === 'npm')
-        await verifyProvenance(
-          context,
-          entry.destination,
-          pkg,
-          artifact.bytes,
-          artifact.metadata,
-          planning.plan.head,
-        );
       const expected =
         entry.destination.ecosystem === 'npm'
           ? entry.artifact.integrity
           : entry.artifact.sha256;
-      const found = await probe(
-        context,
-        entry.destination,
-        pkg,
-        artifact.metadata,
-      );
-      if (found !== null && (!entry.intent || found !== expected))
-        return releaseError(
-          `Registry version conflicts with this batch: ${pkg.id}@${pkg.nextVersion}.`,
-          'EWORKSPACECONFLICT',
+      if (!entry.published && !entry.acknowledged) {
+        const found = await probe(
+          context,
+          entry.destination,
+          pkg,
+          artifact.metadata,
         );
-      if (found === null) {
-        if (entry.published)
+        if (found !== null && (!entry.intent || found !== expected))
           return releaseError(
-            'A previously published package is missing from its registry.',
+            `Registry version conflicts with this batch: ${pkg.id}@${pkg.nextVersion}.`,
             'EWORKSPACECONFLICT',
           );
-        entry.intent = true;
-        await persist();
-        let failure: unknown;
-        try {
-          await upload(
-            context,
-            entry.destination,
-            artifact.bytes,
-            artifact.metadata,
-            entry.destination.cargoAuth === 'oidc'
-              ? await cargoIdentity.token(entry.destination)
-              : undefined,
-          );
-        } catch (error) {
-          failure = error;
-        }
-        // A successful response may precede Cargo index visibility; only a checksum is proof.
-        let confirmed: string | null = null;
-        for (let attempt = 0; attempt < 5; attempt++) {
-          confirmed = await probe(
-            context,
-            entry.destination,
-            pkg,
-            artifact.metadata,
-          );
-          if (confirmed !== null) break;
-          if (attempt < 4)
-            await new Promise((resolve) =>
-              setTimeout(resolve, 250 * 2 ** attempt),
+        if (found === null) {
+          entry.intent = true;
+          await persist();
+          try {
+            await upload(
+              context,
+              entry.destination,
+              artifact.bytes,
+              artifact.metadata,
+              entry.destination.cargoAuth === 'oidc'
+                ? await cargoIdentity.token(entry.destination)
+                : undefined,
             );
-        }
-        if (confirmed !== expected) {
-          if (failure) throw failure;
-          return releaseError(
-            `Publication cannot yet be confirmed: ${pkg.id}. Retry this same batch.`,
-          );
+          } catch (error) {
+            // A lost response is uncertain: recover only with matching registry proof.
+            const deadline =
+              performance.now() +
+              (entry.destination.ecosystem === 'npm'
+                ? npmVisibilityTimeout(config)
+                : Infinity);
+            for (let attempt = 0; ; attempt++) {
+              const confirmed = await probe(
+                context,
+                entry.destination,
+                pkg,
+                artifact.metadata,
+              );
+              if (confirmed === expected) break;
+              if (confirmed !== null)
+                return releaseError(
+                  `Registry version conflicts with this batch: ${pkg.id}@${pkg.nextVersion}.`,
+                  'EWORKSPACECONFLICT',
+                );
+              const remaining = deadline - performance.now();
+              if (attempt === 4 || remaining <= 0) throw error;
+              await new Promise((resolve) =>
+                setTimeout(resolve, Math.min(250 * 2 ** attempt, remaining)),
+              );
+            }
+          }
         }
       }
+      // Persist the successful response (or recovered proof) before pushing tags.
       entry.published = true;
       await persist();
       await tags(context, execution, planning, true);
@@ -514,7 +584,14 @@ export async function recoverManifests(
       'EWORKSPACEARTIFACT',
     );
   const paths = (
-    await git(context, 'diff', '--name-only', '-z', current.head, prepared)
+    await gitOutput(
+      context,
+      'diff',
+      '--name-only',
+      '-z',
+      current.head,
+      prepared,
+    )
   )
     .split('\0')
     .filter(Boolean);

@@ -45,19 +45,46 @@ export function serviceURL(value: unknown): string {
     );
   }
 }
+// Check routing before disclosing identities; registries verify signatures.
+export function identityForAudience(token: string, audience: string): string {
+  try {
+    const parts = token.split('.');
+    const claims: unknown = JSON.parse(
+      Buffer.from(parts[1] ?? '', 'base64url').toString('utf8'),
+    );
+    if (
+      parts.length !== 3 ||
+      !parts.every(Boolean) ||
+      !record(claims) ||
+      !(
+        claims.aud === audience ||
+        (Array.isArray(claims.aud) &&
+          claims.aud.every((value) => typeof value === 'string') &&
+          claims.aud.includes(audience))
+      )
+    )
+      throw new Error();
+    return token;
+  } catch {
+    return releaseError(
+      'The supplied CI identity must match the destination audience. Check the ID token audience configuration.',
+      'EWORKSPACEOIDC',
+    );
+  }
+}
 export async function identityToken(
   env: NodeJS.ProcessEnv,
   audience: string,
 ): Promise<string> {
   try {
     if (audience.startsWith('npm:') && env.NPM_ID_TOKEN && ciProvider(env))
-      return env.NPM_ID_TOKEN;
+      return identityForAudience(env.NPM_ID_TOKEN, audience);
     if (
       audience === 'sigstore' &&
       env.SIGSTORE_ID_TOKEN &&
       ['github', 'gitlab'].includes(ciProvider(env) ?? '')
     )
-      return env.SIGSTORE_ID_TOKEN;
+      return identityForAudience(env.SIGSTORE_ID_TOKEN, audience);
     if (ciProvider(env) !== 'github' || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN)
       throw new Error();
     const url = new URL(serviceURL(env.ACTIONS_ID_TOKEN_REQUEST_URL));
@@ -78,7 +105,7 @@ export async function identityToken(
       !data.value
     )
       throw new Error();
-    return data.value;
+    return identityForAudience(data.value, audience);
   } catch {
     return releaseError(
       'Cannot obtain CI identity. Check the supported provider, audience and id-token permissions.',
@@ -112,14 +139,20 @@ export async function publishingOptions(
       `${dest.registry}/-/npm/v1/oidc/token/exchange/package/${encodeURIComponent(name)}`,
       { ...opts, agent: exchangeAgent, method: 'POST', forceAuth: { token } },
     );
+    if (!record(data)) throw new Error();
+    // npm returns Unix seconds; also accept documented ISO timestamps.
+    const expires =
+      typeof data.expires === 'number'
+        ? data.expires * 1000
+        : typeof data.expires === 'string'
+          ? Date.parse(data.expires)
+          : Number.NaN;
     if (
-      !record(data) ||
       data.token_type !== 'oidc' ||
       typeof data.token !== 'string' ||
       !data.token ||
-      typeof data.expires !== 'string' ||
-      !Number.isFinite(Date.parse(data.expires)) ||
-      Date.parse(data.expires) < Date.now() + 15_000
+      !Number.isFinite(expires) ||
+      expires < Date.now() + 15_000
     )
       throw new Error();
     return { ...opts, forceAuth: { token: data.token } };

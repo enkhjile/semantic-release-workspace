@@ -28,6 +28,7 @@ import {
 } from './journal.js';
 import { createVersionPlan } from './planning.js';
 import {
+  npmVisibilityTimeout,
   preflight,
   preparePublication,
   publishing,
@@ -57,6 +58,12 @@ export async function verifyConditions(
     );
   }
   changelogEnabled(config);
+  npmVisibilityTimeout(config);
+  if (config.synchronizeDependents !== undefined)
+    throw new SemanticReleaseError(
+      'synchronizeDependents was removed. Upgrade dependency requirements explicitly in source manifests.',
+      'EWORKSPACECONFIG',
+    );
   npmChannel(context.branch.channel);
   if (
     branchType(context) === 'prerelease' &&

@@ -67,7 +67,7 @@ function notes(result: ReturnType<ReturnType<typeof fixture>['run']>) {
   if (!text) throw new Error('Expected release notes');
   return text;
 }
-test('real semantic-release emits isolated npm and Cargo notes with breaking and dependency changes', () => {
+test('real semantic-release emits isolated notes only for changed npm and Cargo packages', () => {
   const repo = workspace();
   change(repo, 'packages/lib/index.js', 'feat: add library search');
   change(
@@ -82,13 +82,10 @@ test('real semantic-release emits isolated npm and Cargo notes with breaking and
   expect(text).toContain('Cargo uses SemVer');
   const visible = text.split('```json')[0] ?? '';
   const lib = visible.split('## npm:lib@1.1.0')[1]?.split('\n## ')[0];
-  const app = visible.split('## npm:app@1.0.1')[1]?.split('\n## ')[0];
   const cargo = visible.split('## cargo:core@2.0.0')[1]?.split('\n## ')[0];
   expect(lib).toContain('add library search');
   expect(lib).not.toContain('replace old Rust API');
-  expect(app).toContain('### Dependencies');
-  expect(app).toContain('npm:lib');
-  expect(app).not.toContain('add library search');
+  expect(visible).not.toContain('## npm:app@');
   expect(cargo).toContain('BREAKING CHANGES');
   expect(cargo).toContain('replace old Rust API');
   expect(text).toContain('```json');
@@ -194,6 +191,7 @@ test('summaries use the source commit date and actual npm tag without inventing 
   );
   repo.git(repo.cwd, 'add', '.');
   repo.commit('chore: private application');
+  change(repo, 'packages/app/index.js', 'fix: private application update');
   change(repo, 'packages/lib/index.js', 'feat: publish library preview');
   execFileSync(
     'git',
@@ -242,7 +240,7 @@ test('relative root presets resolve consistently for version analysis and packag
 test('an existing release heading stays attached to its notes below the newly generated version', () => {
   const repo = workspace();
   writeFileSync(
-    join(repo.cwd, 'packages/lib/CHANGELOG.md'),
+    join(repo.cwd, 'CHANGELOG.md'),
     '## 0.9.0\n\nOld release notes.\n',
   );
   repo.git(repo.cwd, 'add', '.');
@@ -253,7 +251,7 @@ test('an existing release heading stays attached to its notes below the newly ge
   const text = repo
     .state()
     .planning.releaseNotes.changelogs.find(
-      (change: { path: string }) => change.path === 'packages/lib/CHANGELOG.md',
+      (change: { path: string }) => change.path === 'CHANGELOG.md',
     ).after;
   expect(text.indexOf('## npm:lib@1.1.0')).toBeLessThan(
     text.indexOf('## 0.9.0'),

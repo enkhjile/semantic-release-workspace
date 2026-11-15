@@ -66,10 +66,6 @@ export async function createVersionPlan(
     (await git(context, 'rev-list', '--topo-order', current.head)).split('\n'),
   );
   const versions = new Map<string, PackageVersion>();
-  const projections = new Map<
-    string,
-    import('./plan-types.js').DependencyUpdate
-  >();
   for (const entry of completed) {
     if (!ancestors.has(entry.head)) continue;
     for (const version of entry.planning?.versions ?? []) {
@@ -83,39 +79,6 @@ export async function createVersionPlan(
     versions.clear();
     for (const version of current.journal.planning?.versions ?? [])
       versions.set(version.id, version);
-  }
-  const positions = new Map([...ancestors].map((head, index) => [head, index]));
-  const projectionHistory = completed
-    .filter(
-      (entry) =>
-        ancestors.has(entry.head) &&
-        (entry.planning?.plan.release?.type !== 'prerelease' ||
-          (branchType(context) === 'prerelease' &&
-            entry.planning.plan.release.prerelease ===
-              String(context.branch.prerelease))),
-    )
-    .sort(
-      (left, right) =>
-        (positions.get(left.head) ?? 0) - (positions.get(right.head) ?? 0),
-    );
-  for (const version of versions.values()) {
-    // Later batches carry projections for unchanged packages, including dev-only
-    // changes. Legacy journals may be the only record of those earlier releases.
-    const carrier = projectionHistory.find((entry) =>
-      entry.planning?.versions.some(
-        (candidate) =>
-          candidate.id === version.id &&
-          candidate.version === version.version &&
-          candidate.head === version.head,
-      ),
-    );
-    for (const update of carrier?.planning?.plan.packages.find(
-      (pkg) => pkg.id === version.id,
-    )?.dependencyUpdates ?? [])
-      projections.set(
-        JSON.stringify([update.manifestPath, update.field]),
-        update,
-      );
   }
   const packages: PackagePlan[] = [];
   const baselines: {
@@ -184,15 +147,11 @@ export async function createVersionPlan(
       dependencyUpdates: [],
     });
   }
-  const coordinated = coordinateDependencies(
-    inventory,
-    packages,
-    workspace,
-    current.journal?.status === 'pending'
-      ? current.journal.planning?.dependencyRanges
-      : [...projections.values()],
-    (version, type) => nextPackageVersion(context, version, type),
-  );
+  const legacyPending =
+    current.journal?.status === 'pending' &&
+    current.journal.planning !== undefined &&
+    current.journal.planning.plan.dependencyPolicy === undefined;
+  const coordinated = coordinateDependencies(inventory, packages, workspace);
   checkPackageBranches(
     context,
     packages,
@@ -229,6 +188,11 @@ export async function createVersionPlan(
     baseHead: baseline(current),
     packages,
     groups: coordinated.groups,
+    ...(!legacyPending
+      ? {
+          dependencyPolicy: 'independent' as const,
+        }
+      : {}),
   };
   if (
     current.journal?.status === 'pending' &&
@@ -247,7 +211,7 @@ export async function createVersionPlan(
       : {}),
     plan,
     versions: [...versions.values()],
-    dependencyRanges: coordinated.dependencyRanges,
+    dependencyRanges: [],
   };
 }
 export function planNotes(plan: ReleasePlan, publish = false): string {
