@@ -17,15 +17,17 @@ pnpm install --frozen-lockfile
 pnpm check
 ```
 
-The published package supports **Node.js 24.11.0 and newer**, as declared by
+The published package supports **Node.js 24.22.3+ within 24.x, or 26.13.1+**, as declared by
 `engines.node` in [package.json](package.json). That file is also the source of
 truth for the exact development Node version (`devEngines.runtime`) and pnpm
 version (`packageManager`).
 Install pnpm using its [installation guide](https://pnpm.io/installation).
 Installation downloads the declared Node runtime when needed, and project scripts
 use it automatically. Commit `pnpm-lock.yaml` with dependency changes.
+The runtime floors include the [November 2026 Node security fixes](https://nodejs.org/en/blog/vulnerability/november-2026-security-releases);
+Node 25 and older Node 26 releases are excluded.
 
-The full test suite also needs Git, npm, OpenSSL, and stable Rust with Cargo on
+The full test suite also needs Git, npm, jq, OpenSSL, and stable Rust with Cargo on
 `PATH`. CI installs stable Rust before testing; local Cargo tests need the same
 toolchain. See the [Rust installation guide](https://www.rust-lang.org/tools/install).
 
