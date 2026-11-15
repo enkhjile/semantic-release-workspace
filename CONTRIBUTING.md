@@ -192,7 +192,7 @@ registry tests and destructive remote cleanup require explicit authorization;
 use designated test packages and obtain maintainer approval for public writes.
 Retry unfinished releases with their original source, configuration and retained artifacts. Never
 delete journals or rewrite tags to bypass a pending batch; see
-[recovery and backups](README.md#recovery-and-backups).
+[recovery and backups](docs/reference.md#recovery-and-backups).
 
 After verification, stop local fixture servers and remove temporary clones,
 downloaded archives, `pnpm pack` tarballs and task-created Cargo targets. Preserve
