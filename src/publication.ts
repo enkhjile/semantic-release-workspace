@@ -15,8 +15,12 @@ import {
   validateProvenanceContext,
   verifyProvenance,
 } from './npm-provenance.js';
-import type { PlanningState } from './plan-types.js';
-import type { Execution, PublicationPackage } from './publication-state.js';
+import type { PackagePlan, PlanningState } from './plan-types.js';
+import type {
+  Destination,
+  Execution,
+  PublicationPackage,
+} from './publication-state.js';
 import {
   completeCargoDestination,
   destination,
@@ -343,6 +347,33 @@ export async function preparePublication(
     execution,
   );
 }
+async function waitForCargoDependency(
+  context: VerifyConditionsContext,
+  destination: Destination,
+  pkg: PackagePlan,
+  checksum: string,
+): Promise<void> {
+  const deadline = performance.now() + 300_000;
+  let delay = 250;
+  while (true) {
+    const found = await probe(context, destination, pkg);
+    if (found === checksum) return;
+    if (found !== null)
+      return releaseError(
+        'Dependency checksum conflicts with this batch.',
+        'EWORKSPACECONFLICT',
+      );
+    const remaining = deadline - performance.now();
+    if (remaining <= 0)
+      return releaseError(
+        'A published Cargo dependency is not yet visible. Retry this same batch.',
+      );
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(delay, remaining)),
+    );
+    delay = Math.min(delay * 2, 10_000);
+  }
+}
 export async function publishPackages(
   config: Record<string, unknown>,
   context: VerifyConditionsContext,
@@ -428,30 +459,12 @@ export async function publishPackages(
               (item) => item.id === dependency,
             );
             if (!target?.published || !target.artifact || !targetPlan) continue;
-            const deadline = performance.now() + 300_000;
-            let delay = 250;
-            while (true) {
-              const found = await probe(
-                context,
-                target.destination,
-                targetPlan,
-              );
-              if (found === target.artifact.sha256) break;
-              if (found !== null)
-                return releaseError(
-                  'Dependency checksum conflicts with this batch.',
-                  'EWORKSPACECONFLICT',
-                );
-              const remaining = deadline - performance.now();
-              if (remaining <= 0)
-                return releaseError(
-                  'A published Cargo dependency is not yet visible. Retry this same batch.',
-                );
-              await new Promise((resolve) =>
-                setTimeout(resolve, Math.min(delay, remaining)),
-              );
-              delay = Math.min(delay * 2, 10_000);
-            }
+            await waitForCargoDependency(
+              context,
+              target.destination,
+              targetPlan,
+              target.artifact.sha256,
+            );
           }
           const artifact = await pack(
             context,
