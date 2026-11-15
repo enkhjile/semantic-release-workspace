@@ -215,6 +215,54 @@ test('Cargo publishes dependency-first using verified native crate artifacts and
   expect(repo.state().status).toBe('complete');
 });
 
+test('Cargo waits for a newly required dependency before packaging and recovers accepted uploads without visibility checks', async () => {
+  const { repo, service } = await cargoWorkspace();
+  const settings = {
+    env: service.env,
+    pluginConfig: { publish: true, cargo: { registry: 'fixture' } },
+  };
+  service.control('hide-cargo:2');
+  const hook = join(repo.remote, 'hooks/update');
+  writeFileSync(
+    hook,
+    '#!/bin/sh\ncase "$1" in refs/tags/cargo/fixture-app*) exit 1;; esac\n',
+  );
+  chmodSync(hook, 0o755);
+  const first = repo.run(settings);
+  expect(first.ok).toBe(false);
+  expect(service.state().uploads).toEqual([
+    'cargo:fixture-core@1.1.0',
+    'cargo:fixture-app@1.1.0',
+  ]);
+  expect(service.state().cargoVisibilityReads['fixture-core']).toBeGreaterThan(
+    2,
+  );
+  expect(service.state().cargoVisibilityReads['fixture-app'] ?? 0).toBe(0);
+  expect(
+    repo
+      .state()
+      .execution.packages.every(
+        (entry: { published: boolean }) => entry.published,
+      ),
+  ).toBe(true);
+  const artifacts = repo
+    .state()
+    .execution.packages.map((entry: { artifact: unknown }) => entry.artifact);
+  unlinkSync(hook);
+  service.control('hide-cargo');
+  const reads = service.state().cargoVisibilityReads;
+  const retry = repo.run(settings, repo.clone());
+  expect(retry.ok, retry.logs).toBe(true);
+  expect(repo.state().status).toBe('complete');
+  expect(service.state().uploads).toHaveLength(2);
+  expect(service.state().cargoVisibilityReads).toEqual(reads);
+  expect(
+    repo
+      .state()
+      .execution.packages.map((entry: { artifact: unknown }) => entry.artifact),
+  ).toEqual(artifacts);
+});
+
 async function cargoWorkspace() {
   const repo = fixture();
   const service = await registry();

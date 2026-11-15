@@ -348,3 +348,24 @@ export function coordinateDependencies(
     ),
   };
 }
+
+// Cargo package resolves registry dependencies after local paths are removed.
+export function cargoPublicationDependencies(
+  inventory: WorkspaceInventory,
+  packages: PackagePlan[],
+  workspace: Record<string, unknown>,
+): Map<string, string[]> {
+  const byId = new Map(packages.map((pkg) => [pkg.id, pkg]));
+  const result = new Map<string, string[]>();
+  for (const pkg of inventory.packages) {
+    if (pkg.ecosystem !== 'cargo') continue;
+    for (const edge of cargoEdges(pkg, inventory, workspace)) {
+      const target = byId.get(edge.target);
+      if (!target || !requiresPlannedVersion(edge, target)) continue;
+      const dependencies = result.get(edge.owner) ?? [];
+      dependencies.push(edge.target);
+      result.set(edge.owner, dependencies);
+    }
+  }
+  return result;
+}

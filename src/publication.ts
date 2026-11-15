@@ -1,5 +1,7 @@
 import type { VerifyConditionsContext } from 'semantic-release';
+import { parse } from 'smol-toml';
 import { createCargoIdentity, hasCargoIdentity } from './cargo-identity.js';
+import { cargoPublicationDependencies } from './dependencies.js';
 import { discoverWorkspaces } from './discovery.js';
 import { git, gitOutput, snapshot, writeJournal } from './journal.js';
 import {
@@ -13,8 +15,12 @@ import {
   validateProvenanceContext,
   verifyProvenance,
 } from './npm-provenance.js';
-import type { PlanningState } from './plan-types.js';
-import type { Execution, PublicationPackage } from './publication-state.js';
+import type { PackagePlan, PlanningState } from './plan-types.js';
+import type {
+  Destination,
+  Execution,
+  PublicationPackage,
+} from './publication-state.js';
 import {
   completeCargoDestination,
   destination,
@@ -309,6 +315,7 @@ export async function preparePublication(
   const retained = await retainedArtifacts(context, planning, execution);
   // A foreign version should be rejected before starting an irreversible batch.
   for (const entry of execution.packages) {
+    if (entry.published || entry.acknowledged) continue;
     const pkg = planning.plan.packages.find((pkg) => pkg.id === entry.id);
     if (!pkg)
       return releaseError(
@@ -325,10 +332,7 @@ export async function preparePublication(
       entry.destination.ecosystem === 'npm'
         ? entry.artifact?.integrity
         : entry.artifact?.sha256;
-    if (
-      (found !== null && (!entry.intent || found !== expected)) ||
-      (found === null && entry.published)
-    )
+    if (found !== null && (!entry.intent || found !== expected))
       return releaseError(
         `Registry version conflicts with this batch: ${pkg.id}@${pkg.nextVersion}.`,
         'EWORKSPACECONFLICT',
@@ -342,6 +346,33 @@ export async function preparePublication(
     planning,
     execution,
   );
+}
+async function waitForCargoDependency(
+  context: VerifyConditionsContext,
+  destination: Destination,
+  pkg: PackagePlan,
+  checksum: string,
+): Promise<void> {
+  const deadline = performance.now() + 300_000;
+  let delay = 250;
+  while (true) {
+    const found = await probe(context, destination, pkg);
+    if (found === checksum) return;
+    if (found !== null)
+      return releaseError(
+        'Dependency checksum conflicts with this batch.',
+        'EWORKSPACECONFLICT',
+      );
+    const remaining = deadline - performance.now();
+    if (remaining <= 0)
+      return releaseError(
+        'A published Cargo dependency is not yet visible. Retry this same batch.',
+      );
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(delay, remaining)),
+    );
+    delay = Math.min(delay * 2, 10_000);
+  }
 }
 export async function publishPackages(
   config: Record<string, unknown>,
@@ -372,6 +403,17 @@ export async function publishPackages(
     );
   await tags(context, execution, planning);
   const retained = await retainedArtifacts(context, planning, execution);
+  const cargoSource = inventory.packages.some(
+    (pkg) => pkg.ecosystem === 'cargo',
+  )
+    ? await readGitFile(context, planning.plan.head, 'Cargo.toml')
+    : null;
+  const cargo = cargoSource === null ? {} : parse(cargoSource);
+  const dependencies = cargoPublicationDependencies(
+    inventory,
+    planning.plan.packages,
+    record(cargo.workspace) ? cargo.workspace : {},
+  );
   const cargoIdentity = createCargoIdentity(context);
   try {
     await applyManifests(root, changes);
@@ -408,6 +450,22 @@ export async function publishPackages(
             );
           entry.artifact = created;
         } else {
+          // Native Cargo packaging resolves registry dependencies; retained artifacts do not.
+          for (const dependency of dependencies.get(id) ?? []) {
+            const target = execution.packages.find(
+              (item) => item.id === dependency,
+            );
+            const targetPlan = planning.plan.packages.find(
+              (item) => item.id === dependency,
+            );
+            if (!target?.published || !target.artifact || !targetPlan) continue;
+            await waitForCargoDependency(
+              context,
+              target.destination,
+              targetPlan,
+              target.artifact.sha256,
+            );
+          }
           const artifact = await pack(
             context,
             entry.destination,
@@ -438,28 +496,21 @@ export async function publishPackages(
         entry.destination.ecosystem === 'npm'
           ? entry.artifact.integrity
           : entry.artifact.sha256;
-      const found = await probe(
-        context,
-        entry.destination,
-        pkg,
-        artifact.metadata,
-      );
-      if (found !== null && (!entry.intent || found !== expected))
-        return releaseError(
-          `Registry version conflicts with this batch: ${pkg.id}@${pkg.nextVersion}.`,
-          'EWORKSPACECONFLICT',
+      if (!entry.published && !entry.acknowledged) {
+        const found = await probe(
+          context,
+          entry.destination,
+          pkg,
+          artifact.metadata,
         );
-      if (found === null) {
-        if (entry.published)
+        if (found !== null && (!entry.intent || found !== expected))
           return releaseError(
-            'A previously published package is missing from its registry.',
+            `Registry version conflicts with this batch: ${pkg.id}@${pkg.nextVersion}.`,
             'EWORKSPACECONFLICT',
           );
-        let failure: unknown;
-        if (!entry.acknowledged) {
+        if (found === null) {
           entry.intent = true;
           await persist();
-          let uploaded = false;
           try {
             await upload(
               context,
@@ -470,52 +521,36 @@ export async function publishPackages(
                 ? await cargoIdentity.token(entry.destination)
                 : undefined,
             );
-            uploaded = true;
           } catch (error) {
-            failure = error;
+            // A lost response is uncertain: recover only with matching registry proof.
+            const deadline =
+              performance.now() +
+              (entry.destination.ecosystem === 'npm'
+                ? npmVisibilityTimeout(config)
+                : Infinity);
+            for (let attempt = 0; ; attempt++) {
+              const confirmed = await probe(
+                context,
+                entry.destination,
+                pkg,
+                artifact.metadata,
+              );
+              if (confirmed === expected) break;
+              if (confirmed !== null)
+                return releaseError(
+                  `Registry version conflicts with this batch: ${pkg.id}@${pkg.nextVersion}.`,
+                  'EWORKSPACECONFLICT',
+                );
+              const remaining = deadline - performance.now();
+              if (attempt === 4 || remaining <= 0) throw error;
+              await new Promise((resolve) =>
+                setTimeout(resolve, Math.min(250 * 2 ** attempt, remaining)),
+              );
+            }
           }
-          if (uploaded && entry.destination.ecosystem === 'npm') {
-            // Record the receipt before waiting so another runner will not upload again.
-            entry.acknowledged = true;
-            await persist();
-          }
-        }
-        // A successful upload can precede registry visibility; only a matching artifact is proof.
-        let confirmed: string | null = null;
-        const deadline = performance.now() + npmVisibilityTimeout(config);
-        let delay = 250;
-        let attempt = 0;
-        while (true) {
-          confirmed = await probe(
-            context,
-            entry.destination,
-            pkg,
-            artifact.metadata,
-          );
-          if (confirmed !== null) break;
-          const remaining = deadline - performance.now();
-          if (entry.acknowledged ? remaining <= 0 : attempt >= 4) break;
-          await new Promise((resolve) =>
-            setTimeout(
-              resolve,
-              entry.acknowledged ? Math.min(delay, remaining) : delay,
-            ),
-          );
-          delay = Math.min(delay * 2, 10_000);
-          attempt++;
-        }
-        if (confirmed !== expected) {
-          if (confirmed !== null)
-            return releaseError(
-              `Registry version conflicts with this batch: ${pkg.id}@${pkg.nextVersion}.`,
-              'EWORKSPACECONFLICT',
-            );
-          if (failure) throw failure;
-          return releaseError(
-            `Publication cannot yet be confirmed: ${pkg.id}. Retry this same batch.`,
-          );
         }
       }
+      // Persist the successful response (or recovered proof) before pushing tags.
       entry.published = true;
       await persist();
       await tags(context, execution, planning, true);
