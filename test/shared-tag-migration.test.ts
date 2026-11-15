@@ -10,7 +10,7 @@ import { fixture } from './fixtures/repository.js';
 afterEach(cleanupFixtures);
 
 test.each(['npm', 'cargo'] as const)(
-  '%s migrates shared tags to package baselines without replaying released commits',
+  '%s migrates shared tags while preserving existing channel notes',
   async (ecosystem) => {
     const repo = fixture();
     const service = await registry();
@@ -79,6 +79,33 @@ test.each(['npm', 'cargo'] as const)(
       'refs/tags/v2.4.0',
     );
 
+    // Support both the historical shared notes ref and core 25's per-tag refs.
+    const oldChannels = JSON.stringify({ channels: [null, 'next'] });
+    const historicalNotes = [
+      'refs/notes/semantic-release',
+      'refs/notes/semantic-release-v2.4.0',
+    ].map((ref) => {
+      repo.git(
+        repo.cwd,
+        'notes',
+        `--ref=${ref}`,
+        'add',
+        '-m',
+        oldChannels,
+        oldRelease,
+      );
+      repo.git(repo.cwd, 'push', 'origin', `${ref}:${ref}`);
+      return { ref, tip: repo.git(repo.remote, 'rev-parse', ref) };
+    });
+    const expectHistoricalNotes = (directory = repo.remote) => {
+      for (const { ref, tip } of historicalNotes) {
+        expect(repo.git(directory, 'rev-parse', ref)).toBe(tip);
+        expect(
+          repo.git(directory, 'notes', `--ref=${ref}`, 'show', oldRelease),
+        ).toBe(oldChannels);
+      }
+    };
+
     // A declared version plus a shared tag does not mark each package's commits released.
     const oldRefs = repo.refs();
     const unseeded = repo.run({ ...settings, dryRun: true });
@@ -103,6 +130,7 @@ test.each(['npm', 'cargo'] as const)(
       ]),
     );
     expect(repo.refs()).toBe(oldRefs);
+    expectHistoricalNotes();
     expect(service.state().uploads).toEqual([]);
 
     // Seed aliases at the actual old release commit, not the migration commit.
@@ -126,6 +154,7 @@ test.each(['npm', 'cargo'] as const)(
       expect(unchanged.ok, unchanged.logs).toBe(true);
       expect(unchanged.result).toBe(false);
       expect(repo.refs()).toBe(seededRefs);
+      expectHistoricalNotes();
       expect(service.state().uploads).toEqual([]);
     }
 
@@ -138,18 +167,47 @@ test.each(['npm', 'cargo'] as const)(
     repo.git(repo.cwd, 'add', '.');
     repo.commit('fix(core): repair the new API');
     const clone = repo.clone();
+    expect(
+      repo.git(clone, 'for-each-ref', '--format=%(refname)', 'refs/notes/'),
+    ).toBe('');
     const appBefore = readFileSync(join(clone, manifest('app')), 'utf8');
     const coreBefore = readFileSync(join(clone, manifest('core')), 'utf8');
     const beforeDryRun = repo.refs();
     const dry = repo.run({ ...settings, dryRun: true }, clone);
     expect(dry.ok, dry.logs).toBe(true);
     expect(repo.refs()).toBe(beforeDryRun);
+    expectHistoricalNotes();
+    expectHistoricalNotes(clone);
     expect(service.state().uploads).toEqual([]);
 
     const released = repo.run(settings, clone);
     expect(released.ok, released.logs).toBe(true);
     if (!released.result) throw new Error('Expected a core release');
     expect(released.result.nextRelease.gitTag).toBe('workspace-v1.0.0');
+    expectHistoricalNotes();
+    expectHistoricalNotes(clone);
+    const coordinatorHead = repo.git(
+      repo.remote,
+      'rev-parse',
+      'workspace-v1.0.0^{commit}',
+    );
+    for (const ref of [
+      'refs/notes/semantic-release-workspace-v1.0.0',
+      'refs/notes/semantic-release-0-workspace',
+    ]) {
+      expect(
+        JSON.parse(
+          repo.git(
+            repo.remote,
+            'notes',
+            `--ref=${ref}`,
+            'show',
+            coordinatorHead,
+          ),
+        ),
+      ).toEqual({ channels: [null] });
+    }
+    expect(repo.state().status).toBe('complete');
     expect(service.state().uploads).toEqual([
       `${ecosystem}:${names.core}@2.4.1`,
     ]);
@@ -186,10 +244,13 @@ test.each(['npm', 'cargo'] as const)(
     );
     expect(repo.git(clone, 'status', '--porcelain')).toBe('');
     const completeRefs = repo.refs();
-    const rerun = repo.run(settings, repo.clone('main', 'completed-retry'));
+    const retry = repo.clone('main', 'completed-retry');
+    const rerun = repo.run(settings, retry);
     expect(rerun.ok, rerun.logs).toBe(true);
     expect(rerun.result).toBe(false);
     expect(repo.refs()).toBe(completeRefs);
+    expectHistoricalNotes();
+    expectHistoricalNotes(retry);
     expect(service.state().uploads).toEqual([
       `${ecosystem}:${names.core}@2.4.1`,
     ]);
