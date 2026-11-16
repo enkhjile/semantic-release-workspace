@@ -47,8 +47,9 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, commands and PR policy;
 
 ## Release safety and cleanup
 
-- `main` is development-only. `rc` publishes release candidates; `release` publishes
-  stable versions. Promote with merge commits and preserve release ancestry.
+- `main` is development-only; `release` publishes stable versions. Promote
+  `main` → `release`, then backmerge `release` → `main`, using merge commits
+  to preserve release ancestry.
 
 - Routine tests must not publish publicly or use real credentials. Live publication,
   release-branch merges and destructive remote cleanup need explicit authorization.

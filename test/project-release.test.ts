@@ -9,7 +9,7 @@ import { fixture } from './fixtures/repository.js';
 
 afterEach(cleanupFixtures);
 
-test('project releases publish rc and release through OIDC while main stays development-only', async () => {
+test('project releases publish directly from main to release through OIDC while retired branches stay inactive', async () => {
   const repo = fixture();
   repo.git(repo.cwd, 'branch', '-m', 'main', 'release');
   repo.git(repo.cwd, 'push', 'origin', 'release');
@@ -40,7 +40,10 @@ test('project releases publish rc and release through OIDC while main stays deve
   );
   repo.git(repo.cwd, 'push', 'origin', '--tags', 'refs/notes/semantic-release');
   repo.git(repo.cwd, 'checkout', '-b', 'rc');
-  repo.commit('chore: start release candidates');
+  repo.git(repo.cwd, 'tag', 'v1.0.0-rc.1');
+  repo.git(repo.cwd, 'push', 'origin', '--tags');
+  repo.git(repo.cwd, 'checkout', '-b', 'main');
+  repo.commit('chore: retire release candidates');
   symlinkSync(
     fileURLToPath(new URL('../node_modules', import.meta.url)),
     join(repo.cwd, 'node_modules'),
@@ -91,69 +94,81 @@ test('project releases publish rc and release through OIDC while main stays deve
       .find((entry) => entry.startsWith('RESULT:'));
     return JSON.parse(line?.slice('RESULT:'.length) ?? '{}');
   };
+  // Both development and retired branches must be inert, even with release commits.
+  const initialRefs = repo.refs();
+  for (const branch of ['main', 'rc', 'alpha']) {
+    repo.git(repo.cwd, 'checkout', branch);
+    for (const dryRun of [true, false]) {
+      const inactive = run(dryRun);
+      expect(inactive.ok, inactive.logs ?? inactive.message).toBe(true);
+      expect(inactive.result).toBe(false);
+    }
+  }
+  expect(repo.refs()).toBe(initialRefs);
+  expect(service.state().uploads).toEqual([]);
+  expect(service.state().exchanges).toBeUndefined();
+
+  const promote = () => {
+    repo.git(repo.cwd, 'checkout', 'release');
+    repo.git(repo.cwd, 'merge', '--no-ff', 'main', '-m', 'chore: promote main');
+    repo.git(repo.cwd, 'push', 'origin', 'release');
+  };
+  promote();
   const refs = repo.refs();
   const preview = run(true);
   expect(preview.ok, preview.logs ?? preview.message).toBe(true);
-  expect(preview.result, preview.logs).toBeTruthy();
-  expect(preview.result.nextRelease.version).toBe('1.0.0-rc.1');
+  expect(preview.result.nextRelease.version).toBe('1.0.0');
   expect(repo.refs()).toBe(refs);
   expect(service.state().uploads).toEqual([]);
   expect(service.state().exchanges).toBeUndefined();
-  const result = run(false);
-  expect(result.ok, result.logs ?? result.message).toBe(true);
-  expect(result.result.nextRelease.version).toBe('1.0.0-rc.1');
+  const stable = run(false);
+  expect(stable.ok, stable.logs ?? stable.message).toBe(true);
+  expect(stable.result.nextRelease.version).toBe('1.0.0');
   expect(service.state().exchanges).toHaveLength(1);
   expect(service.state().uploads).toEqual([
-    'npm:project-release-fixture@1.0.0-rc.1',
+    'npm:project-release-fixture@1.0.0',
   ]);
   expect(service.state().npmTags['project-release-fixture']).toEqual({
-    rc: '1.0.0-rc.1',
+    latest: '1.0.0',
   });
   expect(run(false).result).toBe(false);
-  repo.git(repo.cwd, 'checkout', 'alpha');
-  const retired = run(false);
-  expect(retired.ok, retired.logs ?? retired.message).toBe(true);
-  expect(retired.result).toBe(false);
-  expect(service.state().uploads).toHaveLength(1);
-  repo.git(repo.cwd, 'checkout', '-b', 'main', 'rc');
-  repo.commit('fix: development changes must not publish');
+
+  // Backmerge release ancestry before the next development patch.
+  repo.git(repo.cwd, 'restore', 'package.json');
+  repo.git(repo.cwd, 'checkout', 'main');
+  repo.git(
+    repo.cwd,
+    'merge',
+    '--no-ff',
+    'release',
+    '-m',
+    'chore: backmerge release',
+  );
+  repo.git(repo.cwd, 'push', 'origin', 'main');
+  expect(run(false).result).toBe(false);
+  writeFileSync(join(repo.cwd, 'index.js'), 'export const value = 2;');
+  repo.git(repo.cwd, 'add', 'index.js');
+  repo.commit('fix: refine public API');
   const development = run(false);
   expect(development.ok, development.logs ?? development.message).toBe(true);
   expect(development.result).toBe(false);
   expect(service.state().uploads).toHaveLength(1);
   expect(service.state().exchanges).toHaveLength(1);
-  repo.git(repo.cwd, 'checkout', 'rc');
-  writeFileSync(join(repo.cwd, 'index.js'), 'export const value = 2;');
-  repo.git(repo.cwd, 'add', 'index.js');
-  repo.commit('fix: refine release candidate');
-  const next = run(false);
-  expect(next.ok, next.logs ?? next.message).toBe(true);
-  expect(next.result.nextRelease.version).toBe('1.0.0-rc.2');
+
+  promote();
+  const patch = run(false);
+  expect(patch.ok, patch.logs ?? patch.message).toBe(true);
+  expect(patch.result.nextRelease.version).toBe('1.0.1');
   expect(service.state().uploads).toEqual([
-    'npm:project-release-fixture@1.0.0-rc.1',
-    'npm:project-release-fixture@1.0.0-rc.2',
+    'npm:project-release-fixture@1.0.0',
+    'npm:project-release-fixture@1.0.1',
   ]);
+  expect(service.state().exchanges).toHaveLength(2);
   expect(service.state().npmTags['project-release-fixture']).toEqual({
-    rc: '1.0.0-rc.2',
+    latest: '1.0.1',
   });
+  expect(run(false).result).toBe(false);
+  expect(service.state().uploads).toHaveLength(2);
   expect(repo.tags()).toContain('v1.0.0-alpha.11');
-  // A new CI checkout does not retain the npm plugin's generated version.
-  repo.git(repo.cwd, 'restore', 'package.json');
-  repo.git(repo.cwd, 'checkout', 'release');
-  repo.git(
-    repo.cwd,
-    'merge',
-    '--no-ff',
-    'rc',
-    '-m',
-    'chore: promote release candidate',
-  );
-  repo.git(repo.cwd, 'push', 'origin', 'release');
-  const stable = run(false);
-  expect(stable.ok, stable.logs ?? stable.message).toBe(true);
-  expect(stable.result.nextRelease.version).toBe('1.0.0');
-  expect(service.state().npmTags['project-release-fixture']).toEqual({
-    rc: '1.0.0-rc.2',
-    latest: '1.0.0',
-  });
+  expect(repo.tags()).toContain('v1.0.0-rc.1');
 }, 60_000);
