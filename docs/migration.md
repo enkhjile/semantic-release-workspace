@@ -2,12 +2,40 @@
 
 Use this guide when an existing semantic-release setup releases workspace
 packages under one repository tag, such as `v2.4.0`, and you want independent
-package versions. Keep your old tags and GitHub releases.
+package versions. Keep your old tags, Git notes, and GitHub releases.
 
 A shared tag is **not** a package baseline for this plugin. Declared manifest
 versions supply a version number but do not mark historical commits as released.
 Without package baselines, the first run can analyze old features and breaking
 changes again.
+
+## Tags versus notes
+
+| State                                                           | Purpose during migration                                                                                            |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Existing shared tags and semantic-release channel notes         | Preserve the old release/channel history unchanged.                                                                 |
+| Seeded `npm/<name>@<version>` and `cargo/<name>@<version>` tags | Establish each package's version and already-released commit boundary. No new notes are needed for these baselines. |
+| New `workspace-v…` tags and coordinator channel notes           | Track future release batches and their channels; created automatically during releases.                             |
+| Plugin journals in Git notes and retained artifact refs         | Track pending/completed batches and recovery artifacts; created by the plugin, not imported from old channel notes. |
+
+The `workspace-v${version}` tag format starts a separate coordinator history.
+Package baselines are read directly from package tags and ancestry. Existing
+channel notes, such as `{"channels":[null,"next"]}`, describe distribution channels;
+they cannot substitute for a journal recording package uploads and retained bytes.
+Do not manually create or copy old notes into the plugin's journal namespace.
+
+Preserve **all** existing notes, including the legacy
+`refs/notes/semantic-release` and newer per-tag `refs/notes/semantic-release-…`
+refs. Ordinary `git clone` / `git fetch --tags` does not copy notes by itself;
+semantic-release fetches them during a run. Repository backups need explicit notes
+coverage; see [recovery and backups](reference.md#recovery-and-backups).
+
+This is an intact-history migration, not force-push recovery. If release commits
+were rewritten or their notes were lost, repair the old release history first.
+The [official force-push troubleshooting guide](https://semantic-release.org/support/troubleshooting/)
+covers restoring tags and channel notes. Do not delete or force-push notes as a
+normal migration step. After adopting this plugin, channel notes alone cannot
+reconstruct its journals and retained artifacts.
 
 ## 1. Establish the last completed release
 
