@@ -37,8 +37,7 @@ npm install --save-dev 'semantic-release@^25.0.9' semantic-release-workspace
 
 For pnpm use `pnpm add -Dw`; for Yarn use `yarn add -D` (Yarn classic also needs
 `-W`). Pass the same two package names and version requirement.
-Commit the resulting manifest and lockfile. Release candidates are available
-separately as `semantic-release-workspace@rc`.
+Commit the resulting manifest and lockfile.
 
 Create `release.config.mjs`:
 
