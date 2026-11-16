@@ -97,6 +97,7 @@ branch.** Unchanged packages get no new changelog section.
 
 ## Documentation
 
+- [Migrate from shared repository tags](https://github.com/enkhjile/semantic-release-workspace/blob/main/docs/migration.md)
 - [Workspace and CI examples](https://github.com/enkhjile/semantic-release-workspace/blob/main/docs/examples.md)
 - [Configuration reference](https://github.com/enkhjile/semantic-release-workspace/blob/main/docs/reference.md):
   discovery, version planning, npm/Cargo publishing, branches, and recovery

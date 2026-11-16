@@ -106,6 +106,9 @@ members staged for packaging. Publication dry-runs check this requirement.
 
 ## Package versions and dependencies
 
+Switching from shared repository tags? Follow the [migration guide](migration.md)
+to seed package baselines before the first release.
+
 Commit scopes do not choose packages: changed paths do. Renames include old and
 new paths; deletions and initial commits count, and merge changes use the first
 parent. Unowned root files and empty commits do not release packages.
