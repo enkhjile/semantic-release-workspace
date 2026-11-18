@@ -244,3 +244,38 @@ After credentials and CI are configured, pushing that release commit publishes
 the selected package. Retrying a completed release without new changes publishes
 nothing. An interrupted release must be retried from the same source commit and
 configuration; see [recovery](reference.md#recovery-and-backups).
+
+## uv (planning only)
+
+```toml
+# pyproject.toml — virtual root
+[tool.uv.workspace]
+members = ["packages/*"]
+exclude = ["packages/scratch"]
+```
+
+```toml
+# packages/core/pyproject.toml
+[project]
+name = "example-core"
+version = "1.2.0"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+```
+
+```js
+// release.config.mjs
+export default {
+  branches: ['main'],
+  tagFormat: 'workspace-v${version}',
+  plugins: [['semantic-release-workspace', { publish: false }]],
+};
+```
+
+A `feat: add core API` commit touching `packages/core` plans
+`python:example-core` at `1.3.0`. Preview with `pnpm exec semantic-release --dry-run`.
+This does not edit `pyproject.toml` or `uv.lock`, build distributions, or publish
+to PyPI. A non-dry run records planning history and coordinator tags; it does not
+create per-package publication tags. See [supported versions and discovery rules](reference.md#uv-planning-only).
