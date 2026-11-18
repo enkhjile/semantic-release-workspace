@@ -186,19 +186,19 @@ export async function createVersionPlan(
   for (const pkg of packages) {
     if (!pkg.nextVersion || pkg.private) continue;
     const prefix = `${pkg.ecosystem}/${pkg.name}@`;
-    const nextVersion = comparableVersion(pkg.id, pkg.nextVersion);
-    const tags =
-      pkg.ecosystem === 'python'
-        ? [...allocatedTags].filter(
-            (tag) =>
-              tag.startsWith(prefix) &&
-              validPackageVersion(pkg.id, tag.slice(prefix.length)) &&
-              comparableVersion(pkg.id, tag.slice(prefix.length)) ===
-                nextVersion,
-          )
-        : allocatedTags.has(`${prefix}${pkg.nextVersion}`)
-          ? [`${prefix}${pkg.nextVersion}`]
-          : [];
+    const expectedTag = `${prefix}${pkg.nextVersion}`;
+    let tags = allocatedTags.has(expectedTag) ? [expectedTag] : [];
+    if (pkg.ecosystem === 'python') {
+      const nextVersion = comparableVersion(pkg.id, pkg.nextVersion);
+      tags = [...allocatedTags].filter((tag) => {
+        if (!tag.startsWith(prefix)) return false;
+        const version = tag.slice(prefix.length);
+        return (
+          validPackageVersion(pkg.id, version) &&
+          comparableVersion(pkg.id, version) === nextVersion
+        );
+      });
+    }
     for (const tag of tags) {
       const prepared =
         current.journal?.status === 'pending'

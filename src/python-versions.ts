@@ -9,14 +9,12 @@ export function pythonSemver(value: unknown): string | null {
     /^(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?(?:\.(0|[1-9]\d*))?(?:(a|b|rc)(0|[1-9]\d*))?$/.exec(
       value,
     );
-  if (
-    !match ||
-    match[0] !== value ||
-    (match[5] !== undefined && !Number.isSafeInteger(Number(match[5])))
-  )
+  if (!match || match[0] !== value) return null;
+  const [, major, minor = '0', patch = '0', stage, iteration] = match;
+  if (iteration !== undefined && !Number.isSafeInteger(Number(iteration)))
     return null;
-  const pre = match[4] === 'a' ? 'alpha' : match[4] === 'b' ? 'beta' : match[4];
-  const result = `${match[1]}.${match[2] ?? 0}.${match[3] ?? 0}${pre ? `-${pre}.${match[5]}` : ''}`;
+  const pre = stage === 'a' ? 'alpha' : stage === 'b' ? 'beta' : stage;
+  const result = `${major}.${minor}.${patch}${pre ? `-${pre}.${iteration}` : ''}`;
   return valid(result) === result ? result : null;
 }
 export function pythonVersion(version: string): string {
