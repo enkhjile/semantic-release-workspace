@@ -103,7 +103,8 @@ Braces and extended shell globs are not supported.
 
 Names use Python normalization: lowercase, with runs of `.`, `_` and `-`
 collapsed to `-`. Duplicate normalized names fail, including private members.
-`tool.uv.managed = false` projects are skipped. Applications without a build
+`tool.uv.managed = false` projects are skipped; on the root, it disables Python
+workspace discovery entirely without disabling npm/Cargo discovery. Applications without a build
 system, or projects with `tool.uv.package = false`, are marked private;
 `tool.uv.package = true` explicitly enables package status.
 

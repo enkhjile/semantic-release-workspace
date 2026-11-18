@@ -51,7 +51,14 @@ export async function discoverPythonWorkspaces(
 ): Promise<WorkspaceInventory | undefined> {
   const data = await manifest(root, root);
   if (!data) return undefined;
-  const workspace = uv(data).workspace;
+  const settings = uv(data);
+  if (settings.managed !== undefined && typeof settings.managed !== 'boolean')
+    pythonError(
+      'tool.uv.managed must be a boolean at the workspace root.',
+      'EWORKSPACECONFIG',
+    );
+  if (settings.managed === false) return undefined;
+  const workspace = settings.workspace;
   if (workspace === undefined && data.project === undefined) return undefined;
   if (workspace !== undefined && !record(workspace))
     return pythonError(

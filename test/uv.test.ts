@@ -129,6 +129,29 @@ describe('uv discovery', () => {
       });
     }
   });
+  test.each(['', '[project]\nname = "root"\ndynamic = ["version"]\n'])(
+    'ignores the entire unmanaged Python root while retaining JavaScript members: %s',
+    { timeout: 60_000 },
+    async (project) => {
+      const f = setup();
+      f.file(
+        'pyproject.toml',
+        `${project}[tool.uv]\nmanaged = false\n[tool.uv.workspace]\nmembers = ["packages/*"]\n`,
+      );
+      f.member('core', 'invalid');
+      f.file('package.json', '{"private":true,"workspaces":["js/*"]}');
+      f.file('js/lib/package.json', '{"name":"lib","version":"1.0.0"}');
+      expect(
+        (await discoverWorkspaces(f.cwd)).packages.map(
+          (pkg) => `${pkg.ecosystem}:${pkg.name}`,
+        ),
+      ).toEqual(['npm:lib']);
+      f.commit('feat: add JavaScript library');
+      expect(preview(f).packages).toMatchObject([
+        { id: 'npm:lib', nextVersion: '1.1.0' },
+      ]);
+    },
+  );
   test('rejects duplicate normalized names', async () => {
     const f = setup();
     f.member('Core.Lib');
