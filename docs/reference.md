@@ -477,8 +477,10 @@ No-change runs and dry runs request, exchange, and revoke no credentials.
 Python publication requires uv 0.13.9 and a Python interpreter on `PATH`.
 Use static `project.version` and a declared `[build-system]`. The plugin builds
 both a wheel and a source distribution with uv in a temporary checkout, validates
-their package identity, and retains both files before uploading. Backend code runs
-during the initial build; a retry uses the retained bytes without rebuilding.
+their package identity, and retains both files before uploading. Builds use tracked
+files from the prepared Git commit, not uncommitted or ignored build outputs.
+Generate required files in the build backend. Backend code runs during the initial
+build; a retry uses the retained bytes without rebuilding.
 
 Set `python.trustedPublishing: true` explicitly to enable Python publishing.
 Python publishing supports GitHub Actions OIDC with PyPI and TestPyPI; custom
