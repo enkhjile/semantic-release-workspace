@@ -7,6 +7,7 @@ import type {
   PlanningState,
   ReleaseNotes,
 } from './plan-types.js';
+import { comparableVersion } from './python-versions.js';
 import {
   digest,
   fetchRef,
@@ -46,12 +47,14 @@ function changelogOrigins(
         )?.currentVersion;
         // Removed members still belong in repository history.
         if (!current) return true;
-        const pre = prerelease(old.nextVersion);
+        const previousVersion = comparableVersion(old.id, old.nextVersion);
+        const currentVersion = comparableVersion(old.id, current);
+        const pre = prerelease(previousVersion);
         return (
-          lte(old.nextVersion, current) &&
+          lte(previousVersion, currentVersion) &&
           (!pre ||
             pre.slice(0, -1).join('.') ===
-              prerelease(current)?.slice(0, -1).join('.'))
+              prerelease(currentVersion)?.slice(0, -1).join('.'))
         );
       });
       return eligible ? [{ journal, change }] : [];

@@ -164,6 +164,51 @@ else:
   assertRestored(repo);
 });
 
+test('Python prerelease changelogs retain another package through dry-run and fresh-clone retry', async () => {
+  const { repo, service, file, settings } = await setup();
+  repo.git(repo.cwd, 'checkout', '-b', 'alpha');
+  repo.git(repo.cwd, 'push', '-u', 'origin', 'alpha');
+  const config = {
+    ...settings,
+    branches: ['main', { name: 'alpha', prerelease: true }],
+    env: { ...settings.env, GITHUB_REF: 'refs/heads/alpha' },
+  };
+  const core = repo.run(config);
+  expect(core.ok, core.logs).toBe(true);
+  expect(repo.tags()).toContain('python/fixture-core@1.1.0a1');
+  file('packages/app/src/fixture_app/__init__.py', 'VALUE = 2\n');
+  repo.git(repo.cwd, 'add', '.');
+  repo.commit('feat: add app API');
+  const refs = repo.refs();
+  const published = service.state();
+  const preview = repo.run({ ...config, dryRun: true });
+  expect(preview.ok, preview.logs).toBe(true);
+  expect(repo.refs()).toBe(refs);
+  expect(service.state()).toEqual(published);
+  const failed = repo.run({ ...config, failure: 'after-prepare' });
+  expect(failed.ok).toBe(false);
+  expect(repo.state('alpha').status).toBe('pending');
+  expect(service.state().uploads).toEqual(published.uploads);
+  const clone = repo.clone('alpha');
+  const retry = repo.run(config, clone);
+  expect(retry.ok, retry.logs).toBe(true);
+  expect(repo.state('alpha').status).toBe('complete');
+  expect(service.state().uploads).toHaveLength(4);
+  expect(repo.tags()).toContain('python/fixture-app@1.1.0a1');
+  const changelog = repo.git(
+    repo.remote,
+    'show',
+    'python/fixture-app@1.1.0a1:CHANGELOG.md',
+  );
+  expect(changelog).toContain('python:fixture-core@1.1.0a1');
+  expect(changelog).toContain('python:fixture-app@1.1.0a1');
+  const before = service.state();
+  const unchanged = repo.run(config, clone);
+  expect(unchanged.ok, unchanged.logs).toBe(true);
+  expect(unchanged.result).toBe(false);
+  expect(service.state()).toEqual(before);
+});
+
 test('Python revocation failure leaves recoverable state and a fresh clone finishes without identity', async () => {
   const { repo, service, settings } = await setup();
   service.control({ rejectRevoke: true });
