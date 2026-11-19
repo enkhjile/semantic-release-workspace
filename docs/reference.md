@@ -481,6 +481,9 @@ their package identity, and retains both files before uploading. Builds use trac
 files from the prepared Git commit, not uncommitted or ignored build outputs.
 Generate required files in the build backend. Backend code runs during the initial
 build; a retry uses the retained bytes without rebuilding.
+Rust-backed Python packages reuse installed rustup toolchains through
+`RUSTUP_HOME` (or the original home’s `.rustup`) and `RUSTUP_TOOLCHAIN`.
+Builds still use an isolated home and do not inherit Cargo publishing credentials.
 
 Set `python.trustedPublishing: true` explicitly to enable Python publishing.
 Python publishing supports GitHub Actions OIDC with PyPI and TestPyPI; custom

@@ -446,3 +446,61 @@ test('Python requires CI identity before building a fresh release', async () => 
   expect(service.state().requests).toEqual([]);
   expect(repo.refs()).toBe(before);
 });
+
+test.each(['default home', 'explicit home'])(
+  'Python Rust builds use the configured toolchain from %s',
+  async (mode) => {
+    const { repo, service, file, settings } = await setup();
+    const rustupHome = execFileSync('rustup', ['show', 'home'], {
+      encoding: 'utf8',
+    }).trim();
+    const home = join(service.root, 'build-home');
+    mkdirSync(home);
+    const configured = join(
+      home,
+      mode === 'default home' ? '.rustup' : 'custom-rustup',
+    );
+    symlinkSync(rustupHome, configured, 'dir');
+    file(
+      'packages/core/pyproject.toml',
+      `[project]
+name = "fixture-core"
+version = "1.0.0"
+[build-system]
+requires = ["maturin==1.16.0"]
+build-backend = "maturin"
+[tool.maturin]
+bindings = "bin"
+`,
+    );
+    file(
+      'packages/core/Cargo.toml',
+      `[package]
+name = "fixture-core"
+version = "1.0.0"
+edition = "2024"
+`,
+    );
+    file('packages/core/src/main.rs', 'fn main() { println!("fixture"); }\n');
+    repo.git(repo.cwd, 'add', '.');
+    repo.commit('fix: build a Rust-backed Python package');
+    const result = repo.run({
+      ...settings,
+      env: {
+        ...settings.env,
+        HOME: home,
+        RUSTUP_HOME: mode === 'explicit home' ? configured : '',
+      },
+    });
+    expect(result.ok, result.logs).toBe(true);
+    expect(service.state().uploads).toHaveLength(2);
+    expect(service.state().uploads).toContain('fixture_core-1.1.0.tar.gz');
+    expect(service.state().uploads.some((name) => name.endsWith('.whl'))).toBe(
+      true,
+    );
+    expect(service.state().exchanges).toBe(1);
+    expect(service.state().revocations).toBe(1);
+    expect(repo.tags()).toContain('python/fixture-core@1.1.0');
+    assertRestored(repo);
+  },
+);

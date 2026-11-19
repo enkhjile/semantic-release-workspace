@@ -1,6 +1,6 @@
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import type { VerifyConditionsContext } from 'semantic-release';
 import { serviceURL } from './npm-identity.js';
 import type { PackagePlan } from './plan-types.js';
@@ -231,10 +231,22 @@ export async function buildPython(
   directory: string,
 ) {
   const out = join(directory, 'dist');
+  const env = context.env ?? process.env;
+  // Keep installed Rust toolchains available without exposing the user's Cargo credentials.
+  const rustupHome =
+    env.RUSTUP_HOME ||
+    join(
+      (process.platform === 'win32' ? env.USERPROFILE : env.HOME) || homedir(),
+      '.rustup',
+    );
   await command(
     {
       cwd: join(source, pkg.path),
-      env: toolEnvironment(context.env ?? process.env, directory),
+      env: {
+        ...toolEnvironment(env, directory),
+        RUSTUP_HOME: resolve(context.cwd ?? process.cwd(), rustupHome),
+        RUSTUP_TOOLCHAIN: env.RUSTUP_TOOLCHAIN,
+      },
     },
     'uv',
     ['build', '--no-sources', '--out-dir', out, '.'],
