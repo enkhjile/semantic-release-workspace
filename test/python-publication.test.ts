@@ -1,5 +1,13 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -121,32 +129,36 @@ test('Python native builds publish only changed packages and preserve manual dep
       'python/fixture-app@1.0.1:packages/app/pyproject.toml',
     ),
   ).toContain('fixture-core>=1.1.0');
-  const entry = Object.values(service.state().files).find(
-    (entry) => entry.name === 'fixture-app',
+  const archives = Object.entries(service.state().files).filter(([name]) =>
+    name.startsWith('fixture_app-'),
   );
-  expect(entry?.version).toBe('1.0.1');
-  const wheel = Object.entries(service.state().files).find(
-    ([name]) => name.startsWith('fixture_app-') && name.endsWith('.whl'),
-  )?.[1];
-  if (!wheel) throw new Error('Missing app wheel');
-  const metadata = execFileSync(
-    'python3',
-    [
-      '-I',
-      '-c',
-      `
-import sys, io, zipfile
-with zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())) as z:
-    [name] = [n for n in z.namelist() if n.endswith('/METADATA')]
-    print(z.read(name).decode())
+  expect(archives).toHaveLength(2);
+  for (const [name, file] of archives) {
+    const metadata = execFileSync(
+      'python3',
+      [
+        '-I',
+        '-c',
+        `
+import io, sys, tarfile, zipfile
+stream = io.BytesIO(sys.stdin.buffer.read())
+if sys.argv[1].endswith('.whl'):
+    with zipfile.ZipFile(stream) as z:
+        [name] = [n for n in z.namelist() if n.endswith('/METADATA')]
+        print(z.read(name).decode())
+else:
+    with tarfile.open(fileobj=stream, mode='r:gz') as t:
+        [entry] = [n for n in t if n.name.endswith('/PKG-INFO')]
+        print(t.extractfile(entry).read().decode())
 `,
-    ],
-    { input: Buffer.from(wheel.bytes, 'base64'), encoding: 'utf8' },
-  );
-  expect(metadata).toContain('Name: fixture-app');
-  expect(metadata).toContain('Version: 1.0.1');
-  expect(metadata).toContain('Requires-Dist: fixture-core>=1.1.0');
-
+        name,
+      ],
+      { input: Buffer.from(file.bytes, 'base64'), encoding: 'utf8' },
+    );
+    expect(metadata).toContain('Name: fixture-app');
+    expect(metadata).toContain('Version: 1.0.1');
+    expect(metadata).toContain('Requires-Dist: fixture-core>=1.1.0');
+  }
   expect(JSON.stringify(repo.state())).not.toContain('fixture-pypi-secret');
   expect(first.logs).not.toContain('fixture-ci-secret');
   assertRestored(repo);
@@ -312,7 +324,7 @@ test('Python OIDC rejection never falls back to an inherited publishing token', 
   expect(result.logs).not.toContain('inherited-secret');
 });
 
-test('mixed npm and Python releases retain independent versions and artifacts', async () => {
+test('mixed npm, Cargo and Python releases retain independent versions and artifacts', async () => {
   const { repo, service, file, settings } = await setup();
   const npm = await registry();
   file('package.json', JSON.stringify({ private: true, workspaces: ['js/*'] }));
@@ -321,6 +333,16 @@ test('mixed npm and Python releases retain independent versions and artifacts', 
     JSON.stringify({ name: 'mixed-python-js', version: '2.0.0' }),
   );
   file('js/lib/index.js', 'export const value = 1;\n');
+  file('Cargo.toml', '[workspace]\nmembers=["rust"]\nresolver="3"\n');
+  file(
+    'rust/Cargo.toml',
+    '[package]\nname="mixed-python-rs"\nversion="3.0.0"\nedition="2024"\npublish=["fixture"]\n',
+  );
+  file('rust/src/lib.rs', 'pub fn value() -> u8 { 1 }\n');
+  file(
+    '.cargo/config.toml',
+    `[registries.fixture]\nindex="sparse+${npm.url}/cargo/index/"\n`,
+  );
   repo.git(repo.cwd, 'add', '.');
   repo.commit('fix: add JavaScript wrapper');
   const result = repo.run({
@@ -329,12 +351,98 @@ test('mixed npm and Python releases retain independent versions and artifacts', 
     pluginConfig: {
       ...settings.pluginConfig,
       npm: { registry: npm.url, trustedPublishing: false },
+      cargo: { registry: 'fixture', trustedPublishing: false },
     },
   });
   expect(result.ok, result.logs).toBe(true);
-  expect(npm.state().uploads).toEqual(['npm:mixed-python-js@2.0.1']);
+  expect(npm.state().uploads.sort()).toEqual([
+    'cargo:mixed-python-rs@3.0.1',
+    'npm:mixed-python-js@2.0.1',
+  ]);
+  expect(repo.tags()).toContain('cargo/mixed-python-rs@3.0.1');
   expect(service.state().uploads).toHaveLength(2);
   expect(repo.tags()).toContain('npm/mixed-python-js@2.0.1');
   expect(repo.tags()).toContain('python/fixture-core@1.1.0');
   assertRestored(repo);
+});
+
+test('Python rejects preexisting PEP 440 equivalent filenames before exchanging credentials', async () => {
+  const { repo, service, settings } = await setup();
+  service.control({ extraFilename: 'fixture_core-1.1.0.0-py3-none-any.whl' });
+  const result = repo.run(settings);
+  expect(result.codes).toContain('EWORKSPACECONFLICT');
+  expect(service.state().exchanges).toBe(0);
+  expect(service.state().uploads).toEqual([]);
+});
+
+test('Python refuses a replacement pyproject symlink while recovering', async () => {
+  const { repo, service, settings } = await setup();
+  service.control({ partial: true });
+  expect(repo.run(settings).ok).toBe(false);
+  const manifest = join(repo.cwd, 'packages/core/pyproject.toml');
+  const target = join(service.root, 'outside.toml');
+  const original = readFileSync(manifest, 'utf8');
+  writeFileSync(target, original);
+  unlinkSync(manifest);
+  symlinkSync(target, manifest);
+  const retry = repo.run(settings);
+  expect(retry.ok).toBe(false);
+  expect(retry.codes).toContain('EWORKSPACEPATH');
+  expect(readFileSync(target, 'utf8')).toBe(original);
+  expect(service.state().uploads).toHaveLength(1);
+});
+
+test('Python promotes a published next release to main after a fresh-clone retry', async () => {
+  const { repo, file, service, settings } = await setup();
+  const config = { ...settings, branches: ['main', 'next'] };
+  const stable = repo.run(config);
+  expect(stable.ok, stable.logs).toBe(true);
+  repo.git(repo.cwd, 'checkout', '-b', 'next');
+  file('packages/core/src/fixture_core/__init__.py', 'VALUE = 3\n');
+  repo.git(repo.cwd, 'add', '.');
+  repo.commit('feat: change core API\n\nBREAKING CHANGE: new API');
+  const next = repo.run({
+    ...config,
+    env: { ...config.env, GITHUB_REF: 'refs/heads/next' },
+  });
+  expect(next.ok, next.logs).toBe(true);
+  expect(repo.tags()).toContain('python/fixture-core@2.0.0');
+  repo.git(repo.cwd, 'checkout', 'main');
+  repo.git(repo.cwd, 'merge', '--no-edit', 'next');
+  repo.git(repo.cwd, 'push', 'origin', 'main');
+  const before = service.state().uploads;
+  const failed = repo.run({ ...config, failure: 'generate-notes' });
+  expect(failed.ok).toBe(false);
+  const promotionRef = `refs/notes/workspace-release-channels/${createHash('sha256').update('main').digest('hex')}`;
+  const promotion = () =>
+    JSON.parse(
+      repo.git(
+        repo.remote,
+        'notes',
+        `--ref=${promotionRef}`,
+        'show',
+        repo.anchor,
+      ),
+    );
+  expect(promotion()).toMatchObject({
+    status: 'pending',
+    versions: [{ id: 'python:fixture-core', version: '2.0.0' }],
+  });
+  const result = repo.run(config, repo.clone());
+  expect(result.ok, result.logs).toBe(true);
+  expect(promotion().status).toBe('complete');
+  expect(service.state().uploads).toEqual(before);
+  expect(service.state().exchanges).toBe(2);
+});
+
+test('Python requires CI identity before building a fresh release', async () => {
+  const { repo, service, settings } = await setup();
+  const before = repo.refs();
+  const result = repo.run({
+    ...settings,
+    env: { ...settings.env, ACTIONS_ID_TOKEN_REQUEST_TOKEN: '' },
+  });
+  expect(result.codes).toContain('EWORKSPACEOIDC');
+  expect(service.state().requests).toEqual([]);
+  expect(repo.refs()).toBe(before);
 });

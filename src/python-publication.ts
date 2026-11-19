@@ -6,7 +6,6 @@ import { serviceURL } from './npm-identity.js';
 import type { PackagePlan } from './plan-types.js';
 import type { Destination } from './publication-state.js';
 import { withPythonToken } from './python-identity.js';
-import { pythonSemver } from './python-versions.js';
 import { command, digest, releaseError } from './release-io.js';
 import { record } from './workspace-files.js';
 
@@ -264,6 +263,26 @@ export async function buildPython(
   return { bytes, metadata };
 }
 
+// Only versions equivalent to a supported plan can conflict. Nonzero epochs,
+// post/dev releases and local versions can never equal those plans.
+function registryVersion(value: string): string | undefined {
+  const match =
+    /^v?(?:0+!)?(\d+(?:\.\d+)*)(?:[-_.]?(a|alpha|b|beta|c|rc|pre|preview)[-_.]?(\d*))?$/i.exec(
+      value,
+    );
+  if (!match?.[1]) return undefined;
+  const release = match[1].split('.').map((n) => n.replace(/^0+(?=\d)/, ''));
+  while (release.length > 1 && release.at(-1) === '0') release.pop();
+  const label = match[2]?.toLowerCase();
+  if (!label) return release.join('.');
+  const stage = label.startsWith('a')
+    ? 'a'
+    : label.startsWith('b')
+      ? 'b'
+      : 'rc';
+  return release.join('.') + stage + (match[3] || '0').replace(/^0+(?=\d)/, '');
+}
+
 async function missing(
   dest: Destination,
   name: string,
@@ -287,20 +306,25 @@ async function missing(
   if (!record(result) || !Array.isArray(result.files))
     return releaseError('Invalid Python simple index response.');
   const absent = new Map(meta?.files.map((f) => [f.filename, f]));
-  const plannedVersion = pythonSemver(version);
+  const plannedVersion = registryVersion(version);
   for (const f of result.files) {
     if (!record(f) || typeof f.filename !== 'string')
       return releaseError('Invalid Python simple index file.');
     // Indexes may contain older sdists whose project component includes dashes.
     // Match PEP 440-equivalent versions before requiring the exact frozen filename.
-    const parts = f.filename.endsWith('.whl')
+    const split = f.filename.endsWith('.whl')
       ? f.filename.split('-').slice(0, 2)
-      : /^(.*)-([^-]+)\.(?:tar\.gz|zip)$/.exec(f.filename)?.slice(1);
+      : new RegExp(
+          `^(${name.split('-').join('[-_.]+')})-(.+)\\.(?:tar\\.gz|zip)$`,
+          'i',
+        )
+          .exec(f.filename)
+          ?.slice(1);
     if (
-      !parts?.[0] ||
-      !parts[1] ||
-      normalize(parts[0]) !== name ||
-      pythonSemver(parts[1]) !== plannedVersion
+      !split?.[0] ||
+      !split[1] ||
+      normalize(split[0]) !== name ||
+      registryVersion(split[1]) !== plannedVersion
     )
       continue;
     const planned = meta?.files.find((entry) => entry.filename === f.filename);

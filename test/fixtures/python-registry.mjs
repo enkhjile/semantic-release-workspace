@@ -99,6 +99,8 @@ const server = createServer(async (request, response) => {
       const files = Object.entries(state.files).filter(
         ([, entry]) => normalize(entry.name) === name,
       );
+      if (control.extraFilename && name === 'fixture-core')
+        files.push([control.extraFilename, { sha256: '0'.repeat(64) }]);
       return json(response, 200, {
         meta: { 'api-version': '1.0' },
         name,

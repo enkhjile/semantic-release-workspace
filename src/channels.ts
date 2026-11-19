@@ -2,7 +2,7 @@ import type {
   GenerateNotesContext,
   VerifyConditionsContext,
 } from 'semantic-release';
-import { gt, prerelease, valid } from 'semver';
+import { gt, prerelease } from 'semver';
 import { assertPendingBranches, npmChannel } from './branches.js';
 import { discoverWorkspaces } from './discovery.js';
 import { executeGit, git, type Journal, snapshot } from './journal.js';
@@ -11,6 +11,7 @@ import { npmSetChannel } from './npm-registry.js';
 import type { PackageVersion } from './plan-types.js';
 import { oid } from './plan-validation.js';
 import { publishing } from './publication.js';
+import { comparableVersion, validPackageVersion } from './python-versions.js';
 import { destination, probe, validateArtifact } from './registries.js';
 import {
   digest,
@@ -47,9 +48,8 @@ function validVersions(value: unknown): value is PackageVersion[] {
       (entry: unknown) =>
         record(entry) &&
         typeof entry.id === 'string' &&
-        /^(?:npm|cargo):\S+$/.test(entry.id) &&
-        typeof entry.version === 'string' &&
-        valid(entry.version) === entry.version &&
+        /^(?:npm|cargo|python):\S+$/.test(entry.id) &&
+        validPackageVersion(entry.id, entry.version) &&
         oid(entry.head),
     ) &&
     new Set(value.map((entry: PackageVersion) => entry.id)).size ===
@@ -182,8 +182,11 @@ async function applyPromotion(
         );
         if (
           pkg?.nextVersion &&
-          !prerelease(pkg.nextVersion) &&
-          gt(pkg.nextVersion, selected.version) &&
+          !prerelease(comparableVersion(version.id, pkg.nextVersion)) &&
+          gt(
+            comparableVersion(version.id, pkg.nextVersion),
+            comparableVersion(version.id, selected.version),
+          ) &&
           entry.execution.packages.some(
             (pkg) => pkg.id === version.id && pkg.tagged,
           )
@@ -207,10 +210,14 @@ async function applyPromotion(
   for (const version of promotion.versions) {
     if (
       !ancestors.has(version.head) ||
-      prerelease(version.version) ||
+      prerelease(comparableVersion(version.id, version.version)) ||
       sourceVersions.some(
         (source) =>
-          source.id === version.id && gt(source.version, version.version),
+          source.id === version.id &&
+          gt(
+            comparableVersion(source.id, source.version),
+            comparableVersion(version.id, version.version),
+          ),
       )
     )
       releaseError(
