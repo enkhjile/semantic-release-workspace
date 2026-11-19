@@ -60,5 +60,15 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal --no-self-update
           rustup default stable
+      - name: Install uv and Python for Python integration tests
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.9"
+          python-version: "3.15.2"
+          enable-cache: false
+      - name: Select the Python interpreter for native builds and artifact validation
+        run: |
+          uv python install 3.15.2
+          echo "$(dirname "$(uv python find 3.15.2)")" >> "$GITHUB_PATH"
       - run: pnpm test:integration
       - run: pnpm pack

@@ -245,7 +245,7 @@ the selected package. Retrying a completed release without new changes publishes
 nothing. An interrupted release must be retried from the same source commit and
 configuration; see [recovery](reference.md#recovery-and-backups).
 
-## uv (planning only)
+## uv
 
 ```toml
 # pyproject.toml — virtual root
@@ -265,17 +265,46 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 ```
 
+Add the package source at `packages/core/src/example_core/__init__.py`.
+
 ```js
 // release.config.mjs
 export default {
   branches: ['main'],
   tagFormat: 'workspace-v${version}',
-  plugins: [['semantic-release-workspace', { publish: false }]],
+  plugins: [
+    [
+      'semantic-release-workspace',
+      {
+        python: { trustedPublishing: true },
+      },
+    ],
+  ],
 };
 ```
 
-A `feat: add core API` commit touching `packages/core` plans
+A `feat: add core API` commit touching `packages/core` selects
 `python:example-core` at `1.3.0`. Preview with `pnpm exec semantic-release --dry-run`.
-This does not edit `pyproject.toml` or `uv.lock`, build distributions, or publish
-to PyPI. A non-dry run records planning history and coordinator tags; it does not
-create per-package publication tags. See [supported versions and discovery rules](reference.md#uv-planning-only).
+A normal run builds a wheel and source distribution, publishes to PyPI and creates
+`python/example-core@1.3.0`. Explicit dependencies and `uv.lock` remain unchanged.
+Use `publish: false` for planning-only operation.
+
+Use the [GitHub Actions workflow](#github-actions-with-oidc), adding uv before the
+release step:
+
+```yaml
+- uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+  with:
+    version: "0.13.9"
+    python-version: "3.15.2"
+- run: |
+    uv python install 3.15.2
+    echo "$(dirname "$(uv python find 3.15.2)")" >> "$GITHUB_PATH"
+```
+
+Configure a PyPI trusted publisher for `example-core` using your real project name,
+repository and `release.yml` workflow. If you set an environment on the publisher,
+set the same environment on the release job. Python-only repositories still need
+Node, semantic-release and this plugin; npm/Cargo and Python members can coexist.
+See [Python publishing](reference.md#python-publishing) and
+[supported versions and discovery rules](reference.md#uv).

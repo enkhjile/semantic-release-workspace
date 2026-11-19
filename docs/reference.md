@@ -6,7 +6,7 @@ Detailed behavior and options for semantic-release-workspace. Start with the
 - [Workspace discovery](#workspace-discovery)
 - [Package versions and dependencies](#package-versions-and-dependencies)
 - [Release notes and changelogs](#release-notes-and-changelogs)
-- [npm publishing](#npm-publishing) and [Cargo publishing](#cargo-publishing)
+- [npm publishing](#npm-publishing), [Cargo publishing](#cargo-publishing), and [Python publishing](#python-publishing)
 - [Branches and channels](#branches-and-channels)
 - [Recovery and backups](#recovery-and-backups)
 
@@ -90,7 +90,7 @@ resolves through `workspace.package.publish`; registry allowlists are enforced
 when selecting a publication destination. Discovery itself needs no Rust
 installation and creates no lockfile or registry resolution.
 
-### uv (planning only)
+### uv
 
 A root `pyproject.toml` supports a standalone `[project]` or a
 `[tool.uv.workspace]` with `members` directory globs and optional `exclude`
@@ -108,7 +108,7 @@ workspace discovery entirely without disabling npm/Cargo discovery. Applications
 system, or projects with `tool.uv.package = false`, are marked private;
 `tool.uv.package = true` explicitly enables package status.
 
-Each selected project needs a static `project.version`. This milestone supports
+Each selected project needs a static `project.version`. Supported versions have
 one to three numeric release components (for example `1`, `1.2`, `1.2.3`) and
 canonical `aN`, `bN`, or `rcN` suffixes. Planned versions have three release
 components. Epochs, development/post/local releases, noncanonical spellings and
@@ -119,14 +119,13 @@ Reachable baseline tags use `python/<normalized-name>@<version>`. A branch
 transition that would lower the Python version (such as an rc baseline to alpha
 on the same release line) fails; use a compatible identifier or higher release line.
 
-**Set `publish: false` for any inventory containing Python projects**, including
-mixed workspaces. Python manifest updates, building, PyPI publishing and
-publication ordering are not implemented. Dependency requirements,
-`tool.uv.sources` and `uv.lock` remain untouched. A core change never selects its
+Python releases prepare `project.version`, build a wheel and source distribution,
+and publish using [PyPI trusted publishing](#python-publishing). Dependency
+requirements, `tool.uv.sources` and `uv.lock` remain untouched. A core change never selects its
 unchanged consumers; a manual dependency upgrade with an app-owned release commit
 selects that app. Non-dry planning runs still record coordinator tags and journals.
 
-See the [uv example](examples.md#uv-planning-only) and the upstream
+See the [uv example](examples.md#uv) and the upstream
 [uv workspace rules](https://docs.astral.sh/uv/concepts/projects/workspaces/).
 
 ### Membership boundaries
@@ -472,6 +471,62 @@ resolution use ordinary read credentials, not the upload token.
 Revocation failures leave pending progress and are reported. Forced termination
 or a lost exchange response can leave a token active until upstream expiry.
 No-change runs and dry runs request, exchange, and revoke no credentials.
+
+## Python publishing
+
+Python publication requires uv 0.13.9 and a Python interpreter on `PATH`.
+Use static `project.version` and a declared `[build-system]`. The plugin builds
+both a wheel and a source distribution with uv in a temporary checkout, validates
+their package identity, and retains both files before uploading. Backend code runs
+during the initial build; a retry uses the retained bytes without rebuilding.
+
+Set `python.trustedPublishing: true` explicitly to enable Python publishing.
+This milestone supports GitHub Actions OIDC with PyPI and TestPyPI; custom
+registries and long-lived token authentication are unsupported.
+Python uses required trusted publishing; stored PyPI tokens and uv credentials
+are not used. Configure the trusted publisher for each project on PyPI, matching
+your repository, release workflow and environment. PyPI supports a
+[pending publisher for a new project](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/).
+GitHub Actions needs `id-token: write` on the release job. No long-lived PyPI
+publishing token is required.
+
+```js
+[
+  'semantic-release-workspace',
+  {
+    python: { trustedPublishing: true },
+  },
+];
+```
+
+PyPI is the default destination. To use TestPyPI, configure both URLs:
+
+```js
+python: {
+  trustedPublishing: true,
+  uploadUrl: 'https://test.pypi.org/legacy/',
+  indexUrl: 'https://test.pypi.org/simple/',
+}
+```
+
+The destination and authentication policy are frozen for an unfinished batch.
+Changing them does not redirect a retry. Credential-bearing exchanges reject
+redirects; exchanged tokens stay out of builds, retained artifacts and logs.
+
+Only package versions change. Declared dependency requirements, `tool.uv.sources`
+and `uv.lock` stay as committed. Builds disable uv source overrides so artifacts
+use declared registry requirements. Upgrade dependencies and regenerate lockfiles
+yourself when adopting a new workspace package version.
+
+A successful upload needs no registry visibility polling. If only one file was
+accepted or the response was lost, retry the same source and configuration. The
+plugin compares remote filenames and checksums with the retained files, rejects
+conflicts, and finishes missing uploads. A fresh clone must fetch the release
+state as described under [recovery and backups](#recovery-and-backups).
+The package tag is created only after both files are accepted or verified present.
+
+Dry runs build nothing and request no publishing credentials. `publish: false`
+continues to support planning-only operation without Python tools or uploads.
 
 ## Branches and channels
 
