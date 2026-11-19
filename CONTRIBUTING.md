@@ -27,9 +27,9 @@ use it automatically. Commit `pnpm-lock.yaml` with dependency changes.
 The runtime floors include the [November 2026 Node security fixes](https://nodejs.org/en/blog/vulnerability/november-2026-security-releases);
 Node 25 and older Node 26 releases are excluded.
 
-The full test suite also needs Git, npm, jq, OpenSSL, and stable Rust with Cargo on
-`PATH`. CI installs stable Rust before testing; local Cargo tests need the same
-toolchain. See the [Rust installation guide](https://www.rust-lang.org/tools/install).
+The full test suite also needs Git, npm, jq, OpenSSL, stable Rust with Cargo,
+uv 0.13.9, and Python 3.15.2 on `PATH`. CI installs these before integration
+testing; local tests need the same tools. See the [Rust installation guide](https://www.rust-lang.org/tools/install).
 
 ## Development commands
 
@@ -66,7 +66,7 @@ to select tests: `pnpm test` runs a compound build-and-test script. Keep the
 four-worker limit used by CI; integration cases launch several real release and
 packaging processes each. Use fewer workers when local resources are limited.
 
-Tests use disposable Git repositories and remotes, local npm/Cargo registries,
+Tests use disposable Git repositories and remotes, local npm/Cargo/Python registries,
 mutual TLS, and local Sigstore/TUF fixtures. They require no real publishing
 credentials and make no public registry writes. Keep new test fixtures local and
 avoid scripts with external side effects.
@@ -74,7 +74,7 @@ avoid scripts with external side effects.
 Reproduce release regressions through real `semantic-release` runs. Check the
 published artifact as well as the plan when manifests change, and cover dry-run
 side effects and fresh-clone recovery when release state is involved.
-Use the public package entry point and native npm/Cargo archives to test packaging.
+Use the public package entry point and native npm/Cargo/Python archives to test packaging.
 Assert dependency requirements and release metadata inside the published artifact,
 not just the plan. Authentication tests must use local identity and registry
 fixtures; GitHub release tests must use a local API fixture.

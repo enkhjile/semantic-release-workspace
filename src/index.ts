@@ -85,21 +85,15 @@ export async function verifyConditions(
     );
   }
   const python = await discoverPythonWorkspaces(root);
-  if (python?.packages.length) {
-    if (publishing(config))
-      throw new SemanticReleaseError(
-        'Python support is planning-only. Set publish: false; Python manifest updates and publishing are not supported yet.',
-        'EWORKSPACECONFIG',
-      );
-    if (
-      branchType(context) === 'prerelease' &&
-      !['alpha', 'beta', 'rc'].includes(String(context.branch.prerelease))
-    )
-      throw new SemanticReleaseError(
-        'Python prerelease identifiers must be alpha, beta or rc.',
-        'EWORKSPACECONFIG',
-      );
-  }
+  if (
+    python?.packages.length &&
+    branchType(context) === 'prerelease' &&
+    !['alpha', 'beta', 'rc'].includes(String(context.branch.prerelease))
+  )
+    throw new SemanticReleaseError(
+      'Python prerelease identifiers must be alpha, beta or rc.',
+      'EWORKSPACECONFIG',
+    );
   checkNotesPolicy(config, (await snapshot(context)).journal);
   if (publishing(config) && !context.options.dryRun)
     await recoverManifests(context);
