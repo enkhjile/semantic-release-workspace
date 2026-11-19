@@ -3,14 +3,16 @@ import { releaseError } from './release-io.js';
 import { record } from './workspace-files.js';
 
 async function exchange(origin: string, endpoint: string, token?: string) {
-  const response = await fetch(new URL(`/_/oidc/${endpoint}`, origin), {
-    method: token === undefined ? 'GET' : 'POST',
-    ...(token === undefined
-      ? {}
+  const request =
+    token === undefined
+      ? { method: 'GET' }
       : {
+          method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ token }),
-        }),
+        };
+  const response = await fetch(new URL(`/_/oidc/${endpoint}`, origin), {
+    ...request,
     redirect: 'error',
     signal: AbortSignal.timeout(30_000),
   });
