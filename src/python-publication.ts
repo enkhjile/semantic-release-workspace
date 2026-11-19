@@ -359,11 +359,11 @@ export async function uploadPython(
   const directory = await mkdtemp(join(tmpdir(), 'workspace-uv-publish-'));
   const env = context.env ?? process.env;
   try {
-    const names = new Set(absent.map((f) => f.filename));
     const paths: string[] = [];
-    for (const f of files.filter((f) => names.has(f.filename))) {
-      const path = join(directory, f.filename);
-      await writeFile(path, Buffer.from(f.data, 'base64'));
+    for (const file of files) {
+      if (!absent.some(({ filename }) => filename === file.filename)) continue;
+      const path = join(directory, file.filename);
+      await writeFile(path, Buffer.from(file.data, 'base64'));
       paths.push(path);
     }
     await withPythonToken(dest.registry, env, async (token) => {
