@@ -481,7 +481,7 @@ their package identity, and retains both files before uploading. Backend code ru
 during the initial build; a retry uses the retained bytes without rebuilding.
 
 Set `python.trustedPublishing: true` explicitly to enable Python publishing.
-This milestone supports GitHub Actions OIDC with PyPI and TestPyPI; custom
+Python publishing supports GitHub Actions OIDC with PyPI and TestPyPI; custom
 registries and long-lived token authentication are unsupported.
 Python uses required trusted publishing; stored PyPI tokens and uv credentials
 are not used. Configure the trusted publisher for each project on PyPI, matching
@@ -508,6 +508,9 @@ python: {
   indexUrl: 'https://test.pypi.org/simple/',
 }
 ```
+
+PyPI attestations are not generated. The retained distribution set, including
+base64 encoding, must fit the existing 100 MiB artifact limit.
 
 The destination and authentication policy are frozen for an unfinished batch.
 Changing them does not redirect a retry. Credential-bearing exchanges reject
