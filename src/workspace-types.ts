@@ -1,5 +1,5 @@
 export interface WorkspacePackage {
-  ecosystem: 'npm' | 'cargo';
+  ecosystem: 'npm' | 'cargo' | 'python';
   name: string;
   directory: string;
   path: string;
@@ -15,6 +15,7 @@ export interface WorkspaceInventory {
     | 'pnpm-workspace.yaml'
     | 'package.json'
     | 'Cargo.toml'
+    | 'pyproject.toml'
     | 'mixed'
     | null;
   packages: WorkspacePackage[];

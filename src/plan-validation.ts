@@ -1,12 +1,10 @@
 import { valid } from 'semver';
 import type { PlanningState } from './plan-types.js';
+import { validPackageVersion } from './python-versions.js';
 import { record } from './workspace-files.js';
 
 export const oid = (value: unknown): value is string =>
   typeof value === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value);
-function version(value: unknown): value is string {
-  return typeof value === 'string' && valid(value) === value;
-}
 function path(value: unknown): value is string {
   return (
     typeof value === 'string' &&
@@ -17,7 +15,7 @@ function path(value: unknown): value is string {
   );
 }
 function id(value: unknown): value is string {
-  return typeof value === 'string' && /^(?:npm|cargo):\S+/.test(value);
+  return typeof value === 'string' && /^(?:npm|cargo|python):\S+/.test(value);
 }
 function update(value: unknown): boolean {
   return (
@@ -75,15 +73,21 @@ export function validPlanning(value: unknown): value is PlanningState {
   for (const pkg of plan.packages) {
     if (
       !record(pkg) ||
-      !['npm', 'cargo'].includes(String(pkg.ecosystem)) ||
+      !['npm', 'cargo', 'python'].includes(String(pkg.ecosystem)) ||
       typeof pkg.name !== 'string' ||
       pkg.id !== `${pkg.ecosystem}:${pkg.name}` ||
       !id(pkg.id) ||
       names.has(pkg.id) ||
       !path(pkg.path) ||
       typeof pkg.private !== 'boolean' ||
-      !(pkg.currentVersion === null || version(pkg.currentVersion)) ||
-      !(pkg.nextVersion === null || version(pkg.nextVersion)) ||
+      !(
+        pkg.currentVersion === null ||
+        validPackageVersion(String(pkg.id), pkg.currentVersion)
+      ) ||
+      !(
+        pkg.nextVersion === null ||
+        validPackageVersion(String(pkg.id), pkg.nextVersion)
+      ) ||
       !(
         pkg.type === null ||
         ['major', 'minor', 'patch'].some((type) => type === pkg.type)
@@ -124,7 +128,7 @@ export function validPlanning(value: unknown): value is PlanningState {
         !record(entry) ||
         !id(entry.id) ||
         versions.has(entry.id) ||
-        !version(entry.version) ||
+        !validPackageVersion(String(entry.id), entry.version) ||
         !oid(entry.head)
       )
         return false;

@@ -2,6 +2,7 @@ import { realpath } from 'node:fs/promises';
 import SemanticReleaseError from '@semantic-release/error';
 import { discoverCargoWorkspaces } from './cargo-discovery.js';
 import { discoverJavaScriptWorkspaces } from './javascript-discovery.js';
+import { discoverPythonWorkspaces } from './python-discovery.js';
 import type { WorkspaceInventory } from './workspace-types.js';
 
 export async function discoverWorkspaces(
@@ -10,14 +11,16 @@ export async function discoverWorkspaces(
   const root = await realpath(directory);
   const javascript = await discoverJavaScriptWorkspaces(root);
   const cargo = await discoverCargoWorkspaces(root);
-  if (!javascript && !cargo)
+  const python = await discoverPythonWorkspaces(root);
+  if (!javascript && !cargo && !python)
     throw new SemanticReleaseError(
-      'A root package.json or Cargo.toml is required.',
+      'A root package.json, Cargo.toml or pyproject.toml is required.',
       'EWORKSPACEMANIFEST',
     );
   const packages = [
     ...(javascript?.packages ?? []),
     ...(cargo?.packages ?? []),
+    ...(python?.packages ?? []),
   ].sort((a, b) =>
     a.path < b.path
       ? -1
@@ -36,14 +39,12 @@ export async function discoverWorkspaces(
       );
     names.set(key, pkg.path);
   }
+  const sources = [javascript?.source, cargo?.source, python?.source].filter(
+    (source) => source != null,
+  );
   return {
     root,
-    source:
-      cargo && javascript?.source
-        ? 'mixed'
-        : cargo
-          ? 'Cargo.toml'
-          : (javascript?.source ?? null),
+    source: sources.length > 1 ? 'mixed' : (sources[0] ?? null),
     packages,
   };
 }

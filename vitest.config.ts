@@ -2,7 +2,11 @@ import { configDefaults, defineConfig } from 'vitest/config';
 
 // Pure in-memory tests. Files using Git, filesystem fixtures, native tools or
 // local services belong to integration. New tests default to integration.
-const unit = ['test/coordination.test.ts', 'test/manifests.test.ts'];
+const unit = [
+  'test/coordination.test.ts',
+  'test/manifests.test.ts',
+  'test/python-versions.test.ts',
+];
 
 export default defineConfig({
   test: {

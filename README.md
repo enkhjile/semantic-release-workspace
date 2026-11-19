@@ -7,6 +7,9 @@ version, based on Conventional Commits that touch its files.
 - Publish through OIDC, with retained artifacts for interrupted-release recovery.
 - Generate one root changelog and optional aggregate GitHub releases.
 
+Python uv workspaces support [discovery and version planning](https://github.com/enkhjile/semantic-release-workspace/blob/main/docs/reference.md#uv-planning-only)
+with static `project.version` and `publish: false`. Python publishing is not yet supported.
+
 ## What gets released?
 
 Starting with core at 1.0.0 and app at 2.0.0:

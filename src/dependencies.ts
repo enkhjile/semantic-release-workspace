@@ -329,7 +329,9 @@ export function coordinateDependencies(
   const edges = inventory.packages.flatMap((pkg) =>
     pkg.ecosystem === 'npm'
       ? npmEdges(pkg, inventory, byId)
-      : cargoEdges(pkg, inventory, workspace),
+      : pkg.ecosystem === 'cargo'
+        ? cargoEdges(pkg, inventory, workspace)
+        : [],
   );
   for (const edge of edges) {
     const target = byId.get(edge.target);

@@ -35,7 +35,7 @@ without claiming that anything reached a registry.
 
 ## Discovery and planning stay separate from publication
 
-[Discovery](../src/discovery.ts) parses JavaScript and Cargo workspace files
+[Discovery](../src/discovery.ts) parses JavaScript, Cargo and uv workspace files
 without invoking package managers, installing dependencies or creating lockfiles.
 It produces a deterministic inventory with ecosystem-qualified identities and
 canonical paths. Duplicate names within an ecosystem and workspace directory
@@ -67,6 +67,15 @@ can keep consuming an older registry version while core releases independently.
 An app manifest upgrade needs its own attributed release commit. New plans use
 source-controlled requirements, not dependency projections from release history.
 Frozen pending plans must match exactly across retries.
+
+### Python planning boundary
+
+uv discovery reads static `project.version` metadata and normalizes Python names.
+Plans and journals retain PEP 440 spelling; the supported release/a/b/rc subset
+is converted to SemVer only for comparison and Conventional Commit increments.
+Python dependency requirements are not resolved or rewritten. Inventories with
+Python members require `publish: false`, checked before recovery writes, so they
+cannot enter npm/Cargo manifest preparation or publication paths.
 
 ## Source, prepared commits and artifacts have different roles
 

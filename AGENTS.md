@@ -7,7 +7,8 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, commands and PR policy;
 ## Architecture
 
 - `src/index.ts` implements semantic-release hooks. Core owns coordinator versions,
-  branches and batch tags; this plugin owns independent npm/Cargo package releases.
+  branches and batch tags; this plugin owns independent npm/Cargo package releases
+  and planning-only uv projects with static Python versions.
 - Discovery → attribution → planning/dependency ordering stays separate from
   publication. Release only packages with their own attributed release commits;
   preserve explicit dependency requirements. Local packaging references are the
