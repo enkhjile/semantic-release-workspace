@@ -48,7 +48,8 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, commands and PR policy;
 
 ## Release safety and cleanup
 
-- `main` is development-only; `release` publishes stable versions. Promote
+- `main` creates `vX.Y.Z-main.N` tags and GitHub prereleases without npm publishing;
+  `release` publishes stable versions to npm. Promote
   `main` → `release`, then backmerge `release` → `main`, using merge commits
   to preserve release ancestry.
 

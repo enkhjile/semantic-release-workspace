@@ -128,7 +128,7 @@ versions and records them in tags and GitHub release notes, without committing
 generated version changes back to the source branch.
 
 The [CI workflow](.github/workflows/ci.yml) uses native path filters to skip PRs
-and `release` pushes changing only root `README.md`, `CONTRIBUTING.md`,
+and `main`/`release` pushes changing only root `README.md`, `CONTRIBUTING.md`,
 `AGENTS.md`, or Markdown under `docs/`. Mixed code/docs changes run CI.
 [Full verification](.github/workflows/verify.yml) runs lint, types, build, unit
 tests, all integration tests and packaging on minimum, project and latest stable
@@ -143,7 +143,11 @@ Docs-only changes start no tests or release attempt. A path-filtered workflow
 can leave a required branch-protection check pending when skipped; account for
 that behavior when configuring repository rules.
 `release` publishes stable versions to npm's `latest` tag.
-`main` is the development branch and never publishes npm versions. Promote reviewed
+`main` creates `vX.Y.Z-main.N` tags and GitHub prereleases with generated notes,
+but never publishes npm versions. Only release-triggering commits advance these
+versions; docs/chore-only changes and no-change reruns do not create new tags.
+For example, a feature can create `v1.1.0-main.1`, followed by
+`v1.1.0-main.2`, before promotion creates stable `v1.1.0`. Promote reviewed
 `main` work directly into `release` with a merge commit, then backmerge `release`
 into `main`. Preserve ancestry rather than squashing promotions or backmerges.
 semantic-release derives versions from commits and release history; a backmerge
@@ -154,6 +158,11 @@ README only when a new version is published. To ship a README update immediately
 use an intentional patch-triggering commit such as
 `fix(docs): update the published npm README`; otherwise include it in the next
 functional release.
+
+The npm plugin enables `npmPublish` only when `GITHUB_REF` equals
+`refs/heads/release`; an unset ref also disables npm publication. Use the
+`ci.yml` workflow on the intended branch for maintainer releases. Manual workflow
+runs follow the same branch policy and full verification gate.
 
 The npm CLI is a pinned development dependency so semantic-release uses the
 project's OIDC-capable client consistently across runners.
@@ -170,8 +179,9 @@ The GitHub plugin keeps releases enabled while limiting issue/PR automation:
 
 GitHub releases still contain generated release notes. See the
 [GitHub plugin options](https://github.com/semantic-release/github/tree/v12.0.10#options).
-The release job grants `contents: write` for GitHub releases and `id-token: write`
-for npm OIDC, and supplies `GITHUB_TOKEN`.
+Both release jobs grant `contents: write` for GitHub releases and supply
+`GITHUB_TOKEN`. Only the stable `release` job grants `id-token: write` for npm
+OIDC; the `main` prerelease job has no OIDC permission.
 
 Maintainers must keep the npm trusted publisher aligned with this repository and
 `ci.yml`, and preserve its publication permissions when changing release setup.
