@@ -183,6 +183,18 @@ export async function preflight(
         (pkg) => pkg.id === entry.id,
       )?.artifact;
     if (retained) continue;
+    if (entry.destination.pythonAuth === 'oidc' && !context.options.dryRun) {
+      const env = context.env ?? process.env;
+      if (
+        env.GITHUB_ACTIONS !== 'true' ||
+        !env.ACTIONS_ID_TOKEN_REQUEST_URL ||
+        !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN
+      )
+        return releaseError(
+          'Python trusted publishing requires GitHub Actions id-token permissions.',
+          'EWORKSPACEOIDC',
+        );
+    }
     if (
       entry.destination.npmAuth === 'oidc' &&
       !hasIdentity(context.env ?? process.env)
@@ -326,7 +338,9 @@ export async function preparePublication(
       context,
       entry.destination,
       pkg,
-      retained.get(entry.id)?.metadata,
+      entry.destination.ecosystem === 'python' && !entry.intent
+        ? undefined
+        : retained.get(entry.id)?.metadata,
     );
     const expected =
       entry.destination.ecosystem === 'npm'
@@ -473,6 +487,7 @@ export async function publishPackages(
             planning.plan,
             inventory,
             config,
+            execution.prepared,
           );
           entry.artifact = await retainArtifact(
             context,
@@ -501,7 +516,9 @@ export async function publishPackages(
           context,
           entry.destination,
           pkg,
-          artifact.metadata,
+          entry.destination.ecosystem === 'python' && !entry.intent
+            ? undefined
+            : artifact.metadata,
         );
         if (found !== null && (!entry.intent || found !== expected))
           return releaseError(
@@ -522,6 +539,7 @@ export async function publishPackages(
                 : undefined,
             );
           } catch (error) {
+            if (record(error) && error.code === 'EWORKSPACEOIDC') throw error;
             // A lost response is uncertain: recover only with matching registry proof.
             const deadline =
               performance.now() +
@@ -601,7 +619,8 @@ export async function recoverManifests(
       (change) => change.path === path,
     );
     if (
-      (!/(?:^|\/)(?:package.json|Cargo.toml)$/.test(path) && !changelog) ||
+      (!/(?:^|\/)(?:package\.json|Cargo\.toml|pyproject\.toml)$/.test(path) &&
+        !changelog) ||
       path.split('/').includes('..')
     )
       return releaseError(

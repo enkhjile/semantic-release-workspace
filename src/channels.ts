@@ -281,6 +281,7 @@ async function applyPromotion(
       resolved.index !== dest.index ||
       resolved.access !== dest.access ||
       resolved.npmAuth !== dest.npmAuth ||
+      resolved.pythonAuth !== dest.pythonAuth ||
       resolved.cargoAuth !== dest.cargoAuth
     )
       releaseError(

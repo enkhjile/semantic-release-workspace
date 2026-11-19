@@ -26,6 +26,13 @@ import {
 } from './npm-registry.js';
 import type { PackagePlan, ReleasePlan } from './plan-types.js';
 import type { Destination } from './publication-state.js';
+import {
+  buildPython,
+  probePython,
+  pythonDestination,
+  uploadPython,
+  validatePython,
+} from './python-publication.js';
 import { command, releaseError } from './release-io.js';
 import { record } from './workspace-files.js';
 import type {
@@ -205,6 +212,7 @@ export async function destination(
   pkg: WorkspacePackage,
   previous?: Destination,
 ): Promise<Destination> {
+  if (pkg.ecosystem === 'python') return pythonDestination(config.python);
   if (pkg.ecosystem === 'npm') {
     const options = config.npm === undefined ? {} : config.npm;
     if (!record(options))
@@ -399,6 +407,7 @@ export async function probe(
   pkg: PackagePlan,
   metadata?: unknown,
 ): Promise<string | null> {
+  if (dest.ecosystem === 'python') return probePython(dest, pkg, metadata);
   if (dest.ecosystem === 'npm') return npmProbe(context, dest, pkg, metadata);
   const token = await cargoToken(context, dest.registry);
   const result = await request(`${dest.index}${cargoIndexPath(pkg.name)}`, {
@@ -672,7 +681,32 @@ export async function pack(
   plan: ReleasePlan,
   inventory: WorkspaceInventory,
   config: Record<string, unknown>,
+  prepared: string,
 ): Promise<{ bytes: Buffer; metadata: unknown }> {
+  if (pkg.ecosystem === 'python') {
+    const directory = await mkdtemp(join(tmpdir(), 'workspace-python-build-'));
+    const source = join(directory, 'source');
+    try {
+      await command(context, 'git', [
+        'clone',
+        '--shared',
+        '--no-checkout',
+        '--quiet',
+        '--',
+        inventory.root,
+        source,
+      ]);
+      await command({ ...context, cwd: source }, 'git', [
+        'checkout',
+        '--detach',
+        '--quiet',
+        prepared,
+      ]);
+      return await buildPython(context, pkg, source, directory);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
   if (pkg.ecosystem === 'npm') {
     const canonical = await readFile(
       join(inventory.root, pkg.path, 'package.json'),
@@ -918,6 +952,8 @@ export async function upload(
   metadata: unknown,
   publishingToken?: string,
 ): Promise<void> {
+  if (dest.ecosystem === 'python')
+    return uploadPython(context, dest, bytes, metadata);
   if (dest.ecosystem === 'npm')
     return npmUpload(context, dest, bytes, metadata);
   const token =
@@ -956,6 +992,7 @@ export async function validateArtifact(
   bytes: Buffer,
   metadata: unknown,
 ): Promise<void> {
+  if (pkg.ecosystem === 'python') return validatePython(pkg, bytes, metadata);
   if (
     !record(metadata) ||
     metadata.name !== pkg.name ||

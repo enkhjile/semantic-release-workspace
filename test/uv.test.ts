@@ -398,7 +398,7 @@ describe('uv planning with real semantic-release', { timeout: 90_000 }, () => {
     expect(result.codes).toContain('EWORKSPACEVERSION');
     expect(f.refs()).toBe(refs);
   });
-  test('rejects dynamic versions and publishing before writes', () => {
+  test('rejects dynamic versions and publishing without explicit Python trusted publishing before writes', () => {
     const f = setup();
     f.file(
       'packages/core/pyproject.toml',
