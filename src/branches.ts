@@ -2,6 +2,7 @@ import type { VerifyConditionsContext } from 'semantic-release';
 import { gte, inc, prerelease, validRange } from 'semver';
 import type { Journal } from './journal.js';
 import type { PackagePlan, ReleasePlan, ReleaseType } from './plan-types.js';
+import { comparableVersion, pythonVersion } from './python-versions.js';
 import { releaseError } from './release-io.js';
 export function branchType(context: VerifyConditionsContext): string {
   return 'type' in context.branch ? String(context.branch.type) : 'release';
@@ -41,7 +42,9 @@ export function nextPackageVersion(
   context: VerifyConditionsContext,
   current: string | null,
   type: ReleaseType,
+  ecosystem = 'npm',
 ): string {
+  if (current !== null) current = comparableVersion(`${ecosystem}:`, current);
   const next = current ? inc(current, type) : '1.0.0';
   if (!next)
     return releaseError(
@@ -50,10 +53,17 @@ export function nextPackageVersion(
     );
   if (branchType(context) !== 'prerelease') return next;
   const preid = String(context.branch.prerelease);
-  return current && prerelease(current) && next === current.split('-')[0]
-    ? (inc(current, 'prerelease', preid) ??
+  const result =
+    current && prerelease(current) && next === current.split('-')[0]
+      ? (inc(current, 'prerelease', preid) ??
         releaseError('Cannot increment prerelease.', 'EWORKSPACEVERSION'))
-    : `${next}-${preid}.1`;
+      : `${next}-${preid}.1`;
+  if (ecosystem === 'python' && current && gte(current, result))
+    releaseError(
+      'The planned Python prerelease must be newer than its baseline. Use a compatible prerelease identifier or a higher release line.',
+      'EWORKSPACEVERSION',
+    );
+  return ecosystem === 'python' ? pythonVersion(result) : result;
 }
 export function coordinatorType(
   context: VerifyConditionsContext,
@@ -93,10 +103,10 @@ export function checkPackageBranches(
         'mergeRange' in context.branch ? String(context.branch.mergeRange) : '';
       const upper = /<(\d+)\.(\d+)\./.exec(range);
       const ceiling = inc(
-        pkg.currentVersion,
+        comparableVersion(pkg.id, pkg.currentVersion),
         upper && Number(upper[2]) > 0 ? 'minor' : 'major',
       );
-      if (ceiling && gte(pkg.nextVersion, ceiling))
+      if (ceiling && gte(comparableVersion(pkg.id, pkg.nextVersion), ceiling))
         releaseError(
           `Package ${pkg.id} exceeds its maintenance line. Merge this change into a higher release branch.`,
           'EWORKSPACEBRANCH',
@@ -112,9 +122,12 @@ export function checkPackageBranches(
         allocated === pkg.nextVersion ||
         (higher.has(entry.branch) &&
           (entry.status === 'pending' || !ancestors.has(entry.head)) &&
-          !prerelease(pkg.nextVersion) &&
-          !prerelease(allocated) &&
-          gte(pkg.nextVersion, allocated))
+          !prerelease(comparableVersion(pkg.id, pkg.nextVersion)) &&
+          !prerelease(comparableVersion(pkg.id, allocated)) &&
+          gte(
+            comparableVersion(pkg.id, pkg.nextVersion),
+            comparableVersion(pkg.id, allocated),
+          ))
       )
         releaseError(
           `Package ${pkg.id}@${pkg.nextVersion} conflicts with release branch ${entry.branch}. Merge or release a higher package version on that branch first.`,

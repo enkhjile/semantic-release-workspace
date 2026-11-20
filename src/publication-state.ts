@@ -3,7 +3,7 @@ import type { Artifact } from './release-io.js';
 import { record } from './workspace-files.js';
 
 export interface Destination {
-  ecosystem: 'npm' | 'cargo';
+  ecosystem: 'npm' | 'cargo' | 'python';
   registry: string;
   access?: 'public' | 'restricted' | null;
   tag?: string;
@@ -11,6 +11,7 @@ export interface Destination {
   api?: string;
   npmAuth?: 'oidc';
   cargoAuth?: 'oidc';
+  pythonAuth?: 'oidc';
   provenance?: true | 'auto';
   sigstore?: {
     fulcioURL: string;
@@ -46,7 +47,9 @@ export function validExecution(value: unknown): value is Execution {
         !record(entry) ||
         typeof entry.id !== 'string' ||
         !record(entry.destination) ||
-        !['npm', 'cargo'].includes(String(entry.destination.ecosystem)) ||
+        !['npm', 'cargo', 'python'].includes(
+          String(entry.destination.ecosystem),
+        ) ||
         typeof entry.destination.registry !== 'string' ||
         !['intent', 'published', 'tagged'].every(
           (key) => typeof entry[key] === 'boolean',
@@ -54,6 +57,11 @@ export function validExecution(value: unknown): value is Execution {
       )
         return false;
       if (
+        (entry.destination.ecosystem === 'python' &&
+          (entry.destination.pythonAuth !== 'oidc' ||
+            typeof entry.destination.index !== 'string')) ||
+        (entry.destination.pythonAuth !== undefined &&
+          entry.destination.ecosystem !== 'python') ||
         (entry.destination.cargoAuth !== undefined &&
           (entry.destination.ecosystem !== 'cargo' ||
             entry.destination.cargoAuth !== 'oidc')) ||

@@ -15,6 +15,7 @@ import { coordinateDependencies } from './dependencies.js';
 import { discoverWorkspaces } from './discovery.js';
 import { baseline, git, readCommits, snapshot } from './journal.js';
 import type { PackagePlan, PackageVersion, ReleasePlan } from './plan-types.js';
+import { comparableVersion, validPackageVersion } from './python-versions.js';
 import { record, text } from './workspace-files.js';
 import type { WorkspacePackage } from './workspace-types.js';
 
@@ -30,6 +31,8 @@ function declaredVersion(
   pkg: WorkspacePackage,
   workspace: Record<string, unknown>,
 ): string | null {
+  if (pkg.ecosystem === 'python' && record(pkg.manifest.project))
+    return String(pkg.manifest.project.version);
   const data = pkg.ecosystem === 'npm' ? pkg.manifest : pkg.manifest.package;
   if (!record(data)) return null;
   let version = data.version;
@@ -69,9 +72,15 @@ export async function createVersionPlan(
   for (const entry of completed) {
     if (!ancestors.has(entry.head)) continue;
     for (const version of entry.planning?.versions ?? []) {
-      if (!eligible(version.version)) continue;
+      if (!eligible(comparableVersion(version.id, version.version))) continue;
       const previous = versions.get(version.id);
-      if (!previous || gt(version.version, previous.version))
+      if (
+        !previous ||
+        gt(
+          comparableVersion(version.id, version.version),
+          comparableVersion(previous.id, previous.version),
+        )
+      )
         versions.set(version.id, version);
     }
   }
@@ -97,8 +106,18 @@ export async function createVersionPlan(
     for (const tag of tags) {
       if (!tag.startsWith(prefix)) continue;
       const candidate = tag.slice(prefix.length);
-      if (valid(candidate) !== candidate || !eligible(candidate)) continue;
-      if (taggedVersion === undefined || gt(candidate, taggedVersion)) {
+      if (
+        !validPackageVersion(id, candidate) ||
+        !eligible(comparableVersion(id, candidate))
+      )
+        continue;
+      if (
+        taggedVersion === undefined ||
+        gt(
+          comparableVersion(id, candidate),
+          comparableVersion(id, taggedVersion),
+        )
+      ) {
         taggedVersion = candidate;
         tagHead = await git(context, 'rev-parse', `refs/tags/${tag}^{commit}`);
       }
@@ -141,7 +160,9 @@ export async function createVersionPlan(
       path: pkg.path,
       private: pkg.private,
       currentVersion: version,
-      nextVersion: type ? nextPackageVersion(context, version, type) : null,
+      nextVersion: type
+        ? nextPackageVersion(context, version, type, pkg.ecosystem)
+        : null,
       type,
       commits: selected,
       dependencyUpdates: [],
@@ -164,22 +185,37 @@ export async function createVersionPlan(
   );
   for (const pkg of packages) {
     if (!pkg.nextVersion || pkg.private) continue;
-    const tag = `${pkg.ecosystem}/${pkg.name}@${pkg.nextVersion}`;
-    if (!allocatedTags.has(tag)) continue;
-    const prepared =
-      current.journal?.status === 'pending'
-        ? current.journal.execution?.prepared
-        : undefined;
-    if (
-      !prepared ||
-      (await git(context, 'rev-parse', `refs/tags/${tag}^{commit}`)) !==
-        prepared
-    )
-      throw new SemanticReleaseError(
-        `Package tag already allocates ${pkg.id}@${pkg.nextVersion}.`,
-        'EWORKSPACETAG',
-      );
+    const prefix = `${pkg.ecosystem}/${pkg.name}@`;
+    const expectedTag = `${prefix}${pkg.nextVersion}`;
+    let tags = allocatedTags.has(expectedTag) ? [expectedTag] : [];
+    if (pkg.ecosystem === 'python') {
+      const nextVersion = comparableVersion(pkg.id, pkg.nextVersion);
+      tags = [...allocatedTags].filter((tag) => {
+        if (!tag.startsWith(prefix)) return false;
+        const version = tag.slice(prefix.length);
+        return (
+          validPackageVersion(pkg.id, version) &&
+          comparableVersion(pkg.id, version) === nextVersion
+        );
+      });
+    }
+    for (const tag of tags) {
+      const prepared =
+        current.journal?.status === 'pending'
+          ? current.journal.execution?.prepared
+          : undefined;
+      if (
+        !prepared ||
+        (await git(context, 'rev-parse', `refs/tags/${tag}^{commit}`)) !==
+          prepared
+      )
+        throw new SemanticReleaseError(
+          `Package tag already allocates ${pkg.id}@${pkg.nextVersion}.`,
+          'EWORKSPACETAG',
+        );
+    }
   }
+
   const route = releaseRoute(context);
   const plan: ReleasePlan = {
     ...(route ? { release: route } : {}),

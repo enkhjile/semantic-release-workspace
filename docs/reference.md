@@ -6,7 +6,7 @@ Detailed behavior and options for semantic-release-workspace. Start with the
 - [Workspace discovery](#workspace-discovery)
 - [Package versions and dependencies](#package-versions-and-dependencies)
 - [Release notes and changelogs](#release-notes-and-changelogs)
-- [npm publishing](#npm-publishing) and [Cargo publishing](#cargo-publishing)
+- [npm publishing](#npm-publishing), [Cargo publishing](#cargo-publishing), and [Python publishing](#python-publishing)
 - [Branches and channels](#branches-and-channels)
 - [Recovery and backups](#recovery-and-backups)
 
@@ -32,7 +32,7 @@ publisher settings or Sigstore availability.
 ## Workspace discovery
 
 Discovery reads manifests without installing dependencies or invoking package
-managers. JavaScript and Cargo definitions can coexist in one repository.
+managers. JavaScript, Cargo, and uv definitions can coexist in one repository.
 
 ### pnpm, npm, and Yarn
 
@@ -90,6 +90,44 @@ resolves through `workspace.package.publish`; registry allowlists are enforced
 when selecting a publication destination. Discovery itself needs no Rust
 installation and creates no lockfile or registry resolution.
 
+### uv
+
+A root `pyproject.toml` supports a standalone `[project]` or a
+`[tool.uv.workspace]` with `members` directory globs and optional `exclude`
+globs. The root project is included; a virtual root without `[project]` is not.
+Exclusions win over members. Selected directories must contain a project manifest;
+ordinary files and hidden directories without a manifest are ignored.
+Nested uv workspaces, unsafe paths and directory symlinks fail discovery.
+Unmatched patterns select nothing.
+Braces and extended shell globs are not supported.
+
+Names use Python normalization: lowercase, with runs of `.`, `_` and `-`
+collapsed to `-`. Duplicate normalized names fail, including private members.
+`tool.uv.managed = false` projects are skipped; on the root, it disables Python
+workspace discovery entirely without disabling npm/Cargo discovery. Applications without a build
+system, or projects with `tool.uv.package = false`, are marked private;
+`tool.uv.package = true` explicitly enables package status.
+
+Each selected project needs a static `project.version`. Supported versions have
+one to three numeric release components (for example `1`, `1.2`, `1.2.3`) and
+canonical `aN`, `bN`, or `rcN` suffixes. Planned versions have three release
+components. Epochs, development/post/local releases, noncanonical spellings and
+longer release tuples fail explicitly, as do dynamic or missing versions.
+Prerelease identifiers must be `alpha`, `beta`, or `rc`; a planned alpha version
+is spelled `1.3.0a1`, not `1.3.0-alpha.1`. Coordinator tags remain SemVer.
+Reachable baseline tags use `python/<normalized-name>@<version>`. A branch
+transition that would lower the Python version (such as an rc baseline to alpha
+on the same release line) fails; use a compatible identifier or higher release line.
+
+Python releases prepare `project.version`, build a wheel and source distribution,
+and publish using [PyPI trusted publishing](#python-publishing). Dependency
+requirements, `tool.uv.sources` and `uv.lock` remain untouched. A core change never selects its
+unchanged consumers; a manual dependency upgrade with an app-owned release commit
+selects that app. Non-dry planning runs still record coordinator tags and journals.
+
+See the [uv example](examples.md#uv) and the upstream
+[uv workspace rules](https://docs.astral.sh/uv/concepts/projects/workspaces/).
+
 ### Membership boundaries
 
 Overlapping selections are deduplicated by canonical path. Nested packages stay
@@ -97,9 +135,9 @@ separate; the deepest package owns a changed file, and different ecosystems at
 the same directory both own it. Private packages remain in dependency planning
 but receive no registry upload or package tag.
 
-Duplicate names fail within each ecosystem, including private packages. npm and
-Cargo may share a name. Git, package-manager caches, and generated Cargo `target`
-directories are excluded. Workspace directory symlinks and symlinked ancestors
+Duplicate names fail within each ecosystem, including private packages. npm,
+Cargo and Python may share a name. Git, package-manager caches, Python `.venv`
+and generated Cargo `target` directories are excluded. Workspace directory symlinks and symlinked ancestors
 are rejected. Discovery can read manifest symlinks inside the repository, but
 publication requires regular manifest files, including private and unchanged
 members staged for packaging. Publication dry-runs check this requirement.
@@ -137,13 +175,13 @@ By default, `feat:` releases a minor, `fix:` a patch, and breaking changes a
 major; documentation/chore-only changes do not release packages. Each package
 takes its strongest signal. Its baseline follows
 completed ancestor history or a newer reachable `npm/<name>@<version>` or
-`cargo/<name>@<version>` tag, then its declared semantic version. A package with
-no version starts at `1.0.0` on its first release; invalid versions fail.
+`cargo/<name>@<version>` tag, then its declared semantic version. For npm/Cargo,
+a package with no version starts at `1.0.0` on its first release; invalid versions fail.
 Each package retains its own unreleased commits across other packages' batches.
 Inherited Cargo versions are planned independently and written into prepared
 member manifests.
 
-npm and Cargo packages have independent versions. Only their own attributed
+Packages have independent versions. Only their own attributed
 release commits select them for release. Updating `core` does not release `app`,
 and releasing both does not rewrite `app`'s explicit dependency requirement.
 Upgrade dependencies yourself and commit the app manifest change with a release
@@ -433,6 +471,70 @@ resolution use ordinary read credentials, not the upload token.
 Revocation failures leave pending progress and are reported. Forced termination
 or a lost exchange response can leave a token active until upstream expiry.
 No-change runs and dry runs request, exchange, and revoke no credentials.
+
+## Python publishing
+
+Python publication requires uv 0.13.9 and a Python interpreter on `PATH`.
+Use static `project.version` and a declared `[build-system]`. The plugin builds
+both a wheel and a source distribution with uv in a temporary checkout, validates
+their package identity, and retains both files before uploading. Builds use tracked
+files from the prepared Git commit, not uncommitted or ignored build outputs.
+Generate required files in the build backend. Backend code runs during the initial
+build; a retry uses the retained bytes without rebuilding.
+Rust-backed Python packages reuse installed rustup toolchains through
+`RUSTUP_HOME` (or the original home’s `.rustup`) and `RUSTUP_TOOLCHAIN`.
+Builds still use an isolated home and do not inherit Cargo publishing credentials.
+
+Set `python.trustedPublishing: true` explicitly to enable Python publishing.
+Python publishing supports GitHub Actions OIDC with PyPI and TestPyPI; custom
+registries and long-lived token authentication are unsupported.
+Python uses required trusted publishing; stored PyPI tokens and uv credentials
+are not used. Configure the trusted publisher for each project on PyPI, matching
+your repository, release workflow and environment. PyPI supports a
+[pending publisher for a new project](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/).
+GitHub Actions needs `id-token: write` on the release job. No long-lived PyPI
+publishing token is required.
+
+```js
+[
+  'semantic-release-workspace',
+  {
+    python: { trustedPublishing: true },
+  },
+];
+```
+
+PyPI is the default destination. To use TestPyPI, configure both URLs:
+
+```js
+python: {
+  trustedPublishing: true,
+  uploadUrl: 'https://test.pypi.org/legacy/',
+  indexUrl: 'https://test.pypi.org/simple/',
+}
+```
+
+PyPI attestations are not generated. The retained distribution set, including
+base64 encoding, must fit the existing 100 MiB artifact limit.
+
+The destination and authentication policy are frozen for an unfinished batch.
+Changing them does not redirect a retry. Credential-bearing exchanges reject
+redirects; exchanged tokens stay out of builds, retained artifacts and logs.
+
+Only package versions change. Declared dependency requirements, `tool.uv.sources`
+and `uv.lock` stay as committed. Builds disable uv source overrides so artifacts
+use declared registry requirements. Upgrade dependencies and regenerate lockfiles
+yourself when adopting a new workspace package version.
+
+A successful upload needs no registry visibility polling. If only one file was
+accepted or the response was lost, retry the same source and configuration. The
+plugin compares remote filenames and checksums with the retained files, rejects
+conflicts, and finishes missing uploads. A fresh clone must fetch the release
+state as described under [recovery and backups](#recovery-and-backups).
+The package tag is created only after both files are accepted or verified present.
+
+Dry runs build nothing and request no publishing credentials. `publish: false`
+continues to support planning-only operation without Python tools or uploads.
 
 ## Branches and channels
 

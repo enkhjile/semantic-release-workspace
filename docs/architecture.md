@@ -35,7 +35,7 @@ without claiming that anything reached a registry.
 
 ## Discovery and planning stay separate from publication
 
-[Discovery](../src/discovery.ts) parses JavaScript and Cargo workspace files
+[Discovery](../src/discovery.ts) parses JavaScript, Cargo and uv workspace files
 without invoking package managers, installing dependencies or creating lockfiles.
 It produces a deterministic inventory with ecosystem-qualified identities and
 canonical paths. Duplicate names within an ecosystem and workspace directory
@@ -67,6 +67,18 @@ can keep consuming an older registry version while core releases independently.
 An app manifest upgrade needs its own attributed release commit. New plans use
 source-controlled requirements, not dependency projections from release history.
 Frozen pending plans must match exactly across retries.
+
+### Python versions and publication
+
+uv discovery reads static `project.version` metadata and normalizes Python names.
+Plans and journals retain PEP 440 spelling; the supported release/a/b/rc subset
+is converted to SemVer only for comparison and Conventional Commit increments.
+Python dependency requirements are not resolved or rewritten. Prepared manifests
+change static `project.version`; uv builds a wheel and source distribution in an
+isolated checkout with source overrides disabled. A versioned artifact envelope
+retains both files, filenames and checksums under the existing immutable ref.
+The complete set is validated before upload or retry. A fresh clone needs no
+rebuild, including when only one file reached the registry.
 
 ## Source, prepared commits and artifacts have different roles
 
@@ -115,7 +127,7 @@ and symlink replacements instead of assuming every dirty file is release-owned.
 versions for conflicts before recording the batch as pending. Before each upload,
 it retains the archive and persists an upload intent. A successful upload response
 is persisted as published immediately. A lost response remains uncertain: recovery
-requires matching npm integrity (and enabled provenance) or Cargo index checksum,
+requires matching npm integrity (and enabled provenance) or Cargo index checksum, or matching Python distribution filenames/checksums,
 together with this batch's recorded intent. Foreign versions fail even if their
 bytes match. Publication and tag progress are persisted separately, so a failed
 tag push can resume without registry reads or uploading again. Older acknowledged
@@ -190,6 +202,13 @@ settings while binding requests to the frozen registry origin. Identity,
 exchange, signing and Cargo credential-bearing requests reject redirects.
 Subprocess output and authenticated URLs are withheld from release errors.
 
+Python requires OIDC. The plugin exchanges and revokes short-lived PyPI tokens
+with redirects rejected, then gives the token only to native uv upload. uv's
+native OIDC client is not used because it permits redirects on token-bearing
+requests. Builds receive no publishing identity; uploads use isolated uv settings
+and credentials. Python retries compare every retained distribution with the index
+and reject conflicting bytes before completing a partially accepted release.
+
 [Provenance](../src/npm-provenance.ts) binds exact tarball bytes, package/version
 and source identity through an npm-compatible statement and verified Sigstore
 bundle. The official SDK and TUF verification check certificates and transparency
@@ -221,7 +240,7 @@ proof before moving any npm channel. It includes versions unchanged in the lates
 batch and preserves newer published ancestor versions on the destination branch.
 Selected package versions are frozen in the promotion intent for retries, and
 planning-only records cannot satisfy publication proof. Cargo versions are reused
-without uploading. Intent is persisted before
+without uploading. Python similarly verifies its retained distribution set. Intent is persisted before
 core records its channel, allowing startup recovery even when core no longer
 calls `addChannel`. Promotion does not pack, upload or sign again.
 
@@ -246,7 +265,7 @@ avoids a second release coordinator or an adapter for arbitrary plugins.
 ## Verify protocols through real local lifecycles
 
 The [tests](../test/) run actual semantic-release subprocesses, disposable bare
-Git remotes and native npm/Cargo packers. Local registry, CI identity, mutual-TLS
+Git remotes and native npm/Cargo/uv packers. Local registry, CI identity, mutual-TLS
 and signed Sigstore/TUF fixtures exercise protocols without public publication or
 real credentials. Assertions cover durable refs, exact archives, source restoration,
 no-change/dry-run behavior and fresh-clone recovery under rejected writes, lost

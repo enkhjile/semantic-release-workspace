@@ -9,7 +9,7 @@ import { fixture } from './fixtures/repository.js';
 
 afterEach(cleanupFixtures);
 
-test('project releases publish directly from main to release through OIDC while retired branches stay inactive', async () => {
+test('project tags main prereleases without npm and publishes stable promotions through OIDC', async () => {
   const repo = fixture();
   repo.git(repo.cwd, 'branch', '-m', 'main', 'release');
   repo.git(repo.cwd, 'push', 'origin', 'release');
@@ -60,6 +60,7 @@ test('project releases publish directly from main to release through OIDC while 
     JSON.stringify({ aud: 'npm:127.0.0.1', repository_visibility: 'private' }),
   ).toString('base64url')}.fixture-signature`;
   const run = (dryRun: boolean) => {
+    const branch = repo.git(repo.cwd, 'branch', '--show-current');
     const stdout = execFileSync(
       process.execPath,
       [
@@ -79,24 +80,25 @@ test('project releases publish directly from main to release through OIDC while 
           GITHUB_ACTIONS: 'true',
           GITHUB_REF: `refs/heads/${repo.git(repo.cwd, 'branch', '--show-current')}`,
           GITHUB_EVENT_NAME: 'push',
-          NPM_ID_TOKEN: jwt,
+          NPM_ID_TOKEN: branch === 'release' ? jwt : undefined,
           // The plugin verifies custom-registry credentials before the CLI
           // exchanges its OIDC identity. The registry rejects this static token
           // on publication, so only the exchanged credential can succeed.
-          NPM_TOKEN: 'fixture-token',
+          NPM_TOKEN: branch === 'release' ? 'fixture-token' : undefined,
         },
         encoding: 'utf8',
         timeout: 60_000,
       },
     );
+    repo.git(repo.cwd, 'restore', 'package.json');
     const line = stdout
       .split('\n')
       .find((entry) => entry.startsWith('RESULT:'));
     return JSON.parse(line?.slice('RESULT:'.length) ?? '{}');
   };
-  // Both development and retired branches must be inert, even with release commits.
+  // Retired branches remain inert, even with release commits.
   const initialRefs = repo.refs();
-  for (const branch of ['main', 'rc', 'alpha']) {
+  for (const branch of ['rc', 'alpha']) {
     repo.git(repo.cwd, 'checkout', branch);
     for (const dryRun of [true, false]) {
       const inactive = run(dryRun);
@@ -105,6 +107,20 @@ test('project releases publish directly from main to release through OIDC while 
     }
   }
   expect(repo.refs()).toBe(initialRefs);
+  expect(service.state().uploads).toEqual([]);
+  expect(service.state().exchanges).toBeUndefined();
+
+  repo.git(repo.cwd, 'checkout', 'main');
+  const mainRefs = repo.refs();
+  const mainPreview = run(true);
+  expect(mainPreview.ok, mainPreview.logs ?? mainPreview.message).toBe(true);
+  expect(mainPreview.result.nextRelease.version).toBe('1.0.0-main.1');
+  expect(repo.refs()).toBe(mainRefs);
+  const main = run(false);
+  expect(main.ok, main.logs ?? main.message).toBe(true);
+  expect(main.result.nextRelease.version).toBe('1.0.0-main.1');
+  expect(repo.tags()).toContain('v1.0.0-main.1');
+  expect(run(false).result).toBe(false);
   expect(service.state().uploads).toEqual([]);
   expect(service.state().exchanges).toBeUndefined();
 
@@ -151,7 +167,15 @@ test('project releases publish directly from main to release through OIDC while 
   repo.commit('fix: refine public API');
   const development = run(false);
   expect(development.ok, development.logs ?? development.message).toBe(true);
-  expect(development.result).toBe(false);
+  expect(development.result.nextRelease.version).toBe('1.0.1-main.1');
+  expect(repo.tags()).toContain('v1.0.1-main.1');
+  writeFileSync(join(repo.cwd, 'index.js'), 'export const value = 3;');
+  repo.git(repo.cwd, 'add', 'index.js');
+  repo.commit('fix: refine public API again');
+  const next = run(false);
+  expect(next.ok, next.logs ?? next.message).toBe(true);
+  expect(next.result.nextRelease.version).toBe('1.0.1-main.2');
+  expect(repo.tags()).toContain('v1.0.1-main.2');
   expect(service.state().uploads).toHaveLength(1);
   expect(service.state().exchanges).toHaveLength(1);
 
@@ -171,4 +195,4 @@ test('project releases publish directly from main to release through OIDC while 
   expect(service.state().uploads).toHaveLength(2);
   expect(repo.tags()).toContain('v1.0.0-alpha.11');
   expect(repo.tags()).toContain('v1.0.0-rc.1');
-}, 60_000);
+}, 90_000);

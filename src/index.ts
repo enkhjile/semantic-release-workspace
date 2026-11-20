@@ -35,6 +35,7 @@ import {
   publishPackages,
   recoverManifests,
 } from './publication.js';
+import { discoverPythonWorkspaces } from './python-discovery.js';
 import {
   changelogEnabled,
   checkNotesPolicy,
@@ -83,6 +84,16 @@ export async function verifyConditions(
       'EWORKSPACECONFIG',
     );
   }
+  const python = await discoverPythonWorkspaces(root);
+  if (
+    python?.packages.length &&
+    branchType(context) === 'prerelease' &&
+    !['alpha', 'beta', 'rc'].includes(String(context.branch.prerelease))
+  )
+    throw new SemanticReleaseError(
+      'Python prerelease identifiers must be alpha, beta or rc.',
+      'EWORKSPACECONFIG',
+    );
   checkNotesPolicy(config, (await snapshot(context)).journal);
   if (publishing(config) && !context.options.dryRun)
     await recoverManifests(context);

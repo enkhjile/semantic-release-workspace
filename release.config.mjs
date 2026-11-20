@@ -1,9 +1,12 @@
 export default {
-  branches: ['release'],
+  branches: ['release', { name: 'main', prerelease: 'main' }],
   plugins: [
     '@semantic-release/commit-analyzer',
     '@semantic-release/release-notes-generator',
-    '@semantic-release/npm',
+    [
+      '@semantic-release/npm',
+      { npmPublish: process.env.GITHUB_REF === 'refs/heads/release' },
+    ],
     [
       '@semantic-release/github',
       {

@@ -18,7 +18,7 @@ export interface DependencyUpdate {
 }
 export interface PackagePlan {
   id: string;
-  ecosystem: 'npm' | 'cargo';
+  ecosystem: 'npm' | 'cargo' | 'python';
   name: string;
   path: string;
   private: boolean;

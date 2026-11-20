@@ -27,9 +27,9 @@ use it automatically. Commit `pnpm-lock.yaml` with dependency changes.
 The runtime floors include the [November 2026 Node security fixes](https://nodejs.org/en/blog/vulnerability/november-2026-security-releases);
 Node 25 and older Node 26 releases are excluded.
 
-The full test suite also needs Git, npm, jq, OpenSSL, and stable Rust with Cargo on
-`PATH`. CI installs stable Rust before testing; local Cargo tests need the same
-toolchain. See the [Rust installation guide](https://www.rust-lang.org/tools/install).
+The full test suite also needs Git, npm, jq, OpenSSL, stable Rust with Cargo,
+uv 0.13.9, and Python 3.15.2 on `PATH`. CI installs these before integration
+testing; local tests need the same tools. See the [Rust installation guide](https://www.rust-lang.org/tools/install).
 
 ## Development commands
 
@@ -66,7 +66,7 @@ to select tests: `pnpm test` runs a compound build-and-test script. Keep the
 four-worker limit used by CI; integration cases launch several real release and
 packaging processes each. Use fewer workers when local resources are limited.
 
-Tests use disposable Git repositories and remotes, local npm/Cargo registries,
+Tests use disposable Git repositories and remotes, local npm/Cargo/Python registries,
 mutual TLS, and local Sigstore/TUF fixtures. They require no real publishing
 credentials and make no public registry writes. Keep new test fixtures local and
 avoid scripts with external side effects.
@@ -74,7 +74,7 @@ avoid scripts with external side effects.
 Reproduce release regressions through real `semantic-release` runs. Check the
 published artifact as well as the plan when manifests change, and cover dry-run
 side effects and fresh-clone recovery when release state is involved.
-Use the public package entry point and native npm/Cargo archives to test packaging.
+Use the public package entry point and native npm/Cargo/Python archives to test packaging.
 Assert dependency requirements and release metadata inside the published artifact,
 not just the plan. Authentication tests must use local identity and registry
 fixtures; GitHub release tests must use a local API fixture.
@@ -128,7 +128,7 @@ versions and records them in tags and GitHub release notes, without committing
 generated version changes back to the source branch.
 
 The [CI workflow](.github/workflows/ci.yml) uses native path filters to skip PRs
-and `release` pushes changing only root `README.md`, `CONTRIBUTING.md`,
+and `main`/`release` pushes changing only root `README.md`, `CONTRIBUTING.md`,
 `AGENTS.md`, or Markdown under `docs/`. Mixed code/docs changes run CI.
 [Full verification](.github/workflows/verify.yml) runs lint, types, build, unit
 tests, all integration tests and packaging on minimum, project and latest stable
@@ -143,7 +143,11 @@ Docs-only changes start no tests or release attempt. A path-filtered workflow
 can leave a required branch-protection check pending when skipped; account for
 that behavior when configuring repository rules.
 `release` publishes stable versions to npm's `latest` tag.
-`main` is the development branch and never publishes npm versions. Promote reviewed
+`main` creates `vX.Y.Z-main.N` tags and GitHub prereleases with generated notes,
+but never publishes npm versions. Only release-triggering commits advance these
+versions; docs/chore-only changes and no-change reruns do not create new tags.
+For example, a feature can create `v1.1.0-main.1`, followed by
+`v1.1.0-main.2`, before promotion creates stable `v1.1.0`. Promote reviewed
 `main` work directly into `release` with a merge commit, then backmerge `release`
 into `main`. Preserve ancestry rather than squashing promotions or backmerges.
 semantic-release derives versions from commits and release history; a backmerge
@@ -154,6 +158,11 @@ README only when a new version is published. To ship a README update immediately
 use an intentional patch-triggering commit such as
 `fix(docs): update the published npm README`; otherwise include it in the next
 functional release.
+
+The npm plugin enables `npmPublish` only when `GITHUB_REF` equals
+`refs/heads/release`; an unset ref also disables npm publication. Use the
+`ci.yml` workflow on the intended branch for maintainer releases. Manual workflow
+runs follow the same branch policy and full verification gate.
 
 The npm CLI is a pinned development dependency so semantic-release uses the
 project's OIDC-capable client consistently across runners.
@@ -170,8 +179,9 @@ The GitHub plugin keeps releases enabled while limiting issue/PR automation:
 
 GitHub releases still contain generated release notes. See the
 [GitHub plugin options](https://github.com/semantic-release/github/tree/v12.0.10#options).
-The release job grants `contents: write` for GitHub releases and `id-token: write`
-for npm OIDC, and supplies `GITHUB_TOKEN`.
+Both release jobs grant `contents: write` for GitHub releases and supply
+`GITHUB_TOKEN`. Only the stable `release` job grants `id-token: write` for npm
+OIDC; the `main` prerelease job has no OIDC permission.
 
 Maintainers must keep the npm trusted publisher aligned with this repository and
 `ci.yml`, and preserve its publication permissions when changing release setup.

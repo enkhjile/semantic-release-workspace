@@ -1,11 +1,14 @@
 # semantic-release-workspace
 
-Release npm and Cargo workspaces with semantic-release. Each package gets its own
-version, based on Conventional Commits that touch its files.
-- Discover pnpm, npm, Yarn, Cargo, and mixed workspaces.
+Release npm, Cargo, and Python uv workspaces with semantic-release. Each package
+gets its own version, based on Conventional Commits that touch its files.
+- Discover pnpm, npm, Yarn, Cargo, uv, and mixed workspaces.
 - Release changed packages; choose dependency upgrades yourself.
 - Publish through OIDC, with retained artifacts for interrupted-release recovery.
 - Generate one root changelog and optional aggregate GitHub releases.
+
+Python packages use static `project.version` values and native uv builds.
+See [PyPI trusted publishing](https://github.com/enkhjile/semantic-release-workspace/blob/main/docs/reference.md#python-publishing) for setup.
 
 ## What gets released?
 
@@ -51,8 +54,9 @@ export default {
 
 Use your release branch instead of `main` if needed. The exact `tagFormat` is
 required: semantic-release tracks release batches with `workspace-v…` tags,
-while this plugin creates independent `npm/<name>@<version>` and
-`cargo/<name>@<version>` package tags. A batch version is not a package version.
+while this plugin creates independent `npm/<name>@<version>`,
+`cargo/<name>@<version>` and `python/<name>@<version>` package tags.
+A batch version is not a package version.
 
 The plugin handles commit analysis, manifests, notes, and publishing. Do not add
 a separate root commit analyzer, notes generator, or npm publisher.
@@ -74,7 +78,8 @@ Before enabling a release workflow:
 - Fetch full Git history and allow pushes of tags, Git notes, and
   `refs/semantic-release-workspace/*`.
 - Install workspace dependencies and build anything package scripts require.
-  npm is needed for npm packaging; Rust/Cargo is needed for crates.
+  npm is needed for npm packaging; Rust/Cargo for crates; uv and Python for
+  Python distributions.
 - Configure publishing credentials or a trusted publisher for each public
   package. Private workspace members are not published.
 - Serialize releases across the entire repository, including different branches.
@@ -99,7 +104,7 @@ branch.** Unchanged packages get no new changelog section.
 - [Migrate from shared repository tags](https://github.com/enkhjile/semantic-release-workspace/blob/main/docs/migration.md)
 - [Workspace and CI examples](https://github.com/enkhjile/semantic-release-workspace/blob/main/docs/examples.md)
 - [Configuration reference](https://github.com/enkhjile/semantic-release-workspace/blob/main/docs/reference.md):
-  discovery, version planning, npm/Cargo publishing, branches, and recovery
+  discovery, version planning, npm/Cargo/Python publishing, branches, and recovery
 - [Architecture](https://github.com/enkhjile/semantic-release-workspace/blob/main/docs/architecture.md)
 - [Contributing](https://github.com/enkhjile/semantic-release-workspace/blob/main/CONTRIBUTING.md)
 - [Release history](https://github.com/enkhjile/semantic-release-workspace/releases)

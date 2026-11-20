@@ -326,11 +326,11 @@ export function coordinateDependencies(
   groups: string[][];
 } {
   const byId = new Map(packages.map((pkg) => [pkg.id, pkg]));
-  const edges = inventory.packages.flatMap((pkg) =>
-    pkg.ecosystem === 'npm'
-      ? npmEdges(pkg, inventory, byId)
-      : cargoEdges(pkg, inventory, workspace),
-  );
+  const edges = inventory.packages.flatMap((pkg) => {
+    if (pkg.ecosystem === 'npm') return npmEdges(pkg, inventory, byId);
+    if (pkg.ecosystem === 'cargo') return cargoEdges(pkg, inventory, workspace);
+    return [];
+  });
   for (const edge of edges) {
     const target = byId.get(edge.target);
     const owner = byId.get(edge.owner);

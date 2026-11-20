@@ -147,6 +147,14 @@ export async function manifestChanges(
   const add = (path: string, edit: Edit) =>
     edits.set(path, [...(edits.get(path) ?? []), edit]);
   for (const pkg of plan.packages) {
+    if (pkg.ecosystem === 'python') {
+      if (pkg.nextVersion)
+        add(join(pkg.path, 'pyproject.toml'), {
+          field: ['project', 'version'],
+          value: pkg.nextVersion,
+        });
+      continue;
+    }
     const version = pkg.nextVersion ?? pkg.currentVersion;
     if (version)
       add(
